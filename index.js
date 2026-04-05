@@ -181,29 +181,62 @@ async function getAIReply(phone, userMessage) {
 }
 
 // ── WEBHOOK ENDPOINT ─────────────────────────────────────────
-// wapi.in.net will POST here every time a customer sends a message
+// panel.wapi.com will POST here every time a customer sends a message
 app.post("/webhook", async (req, res) => {
   // Always respond 200 immediately so wapi doesn't retry
   res.sendStatus(200);
 
   try {
     const body = req.body;
-    console.log("📩 Incoming webhook:", JSON.stringify(body, null, 2));
+
+    // ── Log full raw payload for debugging ────────────────────
+    console.log("📩 Incoming webhook (raw):", JSON.stringify(body, null, 2));
 
     // ── Parse incoming message ────────────────────────────────
-    // wapi.in.net payload format (adjust field names if needed
-    // after checking your actual webhook in the dashboard logs)
-    const event       = body?.event || body?.type || "";
-    const messageData = body?.data  || body?.message || body;
+    // panel.wapi.com sends one of two shapes:
+    //   Shape A: { event, data: { from, fromMe, body, type, ... } }
+    //   Shape B: { event, message: { from, body, ... } }
+    // We try both and fall back gracefully.
 
-    // Only process incoming text messages from customers
-    const isIncoming  = event === "message" || event === "incoming" || body?.fromMe === false;
-    const messageText = messageData?.body || messageData?.text || messageData?.message || "";
-    const fromPhone   = messageData?.from  || messageData?.sender || body?.from || "";
+    const event = body?.event || body?.type || "";
+
+    // Resolve the nested message object — prefer `data`, then `message`, then root
+    const messageData = body?.data || body?.message || body;
+
+    // Extract fields from the resolved message object, with root-level fallbacks
+    const messageText = messageData?.body    || messageData?.text    || messageData?.message || "";
+    const fromPhone   = messageData?.from    || messageData?.sender  || body?.from           || "";
+
+    // `fromMe` can live inside the nested object (Shape A) or at root level
+    const fromMe      = messageData?.fromMe  ?? body?.fromMe         ?? null;
+
+    // Determine if this is an inbound customer message:
+    //   - event must be "message" or "incoming" (or absent, for providers that omit it)
+    //   - fromMe must NOT be explicitly true (null/undefined = assume inbound)
+    const eventOk     = !event || event === "message" || event === "incoming";
+    const isIncoming  = eventOk && fromMe !== true;
+
+    // ── Diagnostic log so we can see exactly what was resolved ─
+    console.log("🔍 Parsed fields:", {
+      event:       event       || "(none)",
+      fromPhone:   fromPhone   || "(missing)",
+      messageText: messageText || "(missing)",
+      fromMe:      fromMe      ?? "(not set)",
+      eventOk,
+      isIncoming,
+    });
 
     // Skip if it's our own sent message, or not a text message
-    if (!isIncoming || !messageText || !fromPhone) {
-      console.log("⏭️ Skipping non-customer message");
+    if (!isIncoming) {
+      console.log(`⏭️ Skipping — not an inbound message (event="${event}", fromMe=${fromMe})`);
+      return;
+    }
+    if (!messageText) {
+      console.log("⏭️ Skipping — no message text found in payload");
+      return;
+    }
+    if (!fromPhone) {
+      console.log("⏭️ Skipping — could not determine sender phone number");
       return;
     }
 
