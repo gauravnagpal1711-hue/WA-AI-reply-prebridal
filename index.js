@@ -205,7 +205,9 @@ app.post("/webhook", async (req, res) => {
 
     // Extract fields from the resolved message object, with root-level fallbacks
     const messageText = messageData?.body    || messageData?.text    || messageData?.message || "";
-    const fromPhone   = messageData?.from    || messageData?.sender  || body?.from           || "";
+    // panel.wapi.com places the sender's number in body.contact.phone_number;
+    // fall back to the message object and root level for other providers.
+    const fromPhone   = body?.contact?.phone_number || messageData?.from || messageData?.sender || body?.from || "";
 
     // `fromMe` can live inside the nested object (Shape A) or at root level
     const fromMe      = messageData?.fromMe  ?? body?.fromMe         ?? null;
@@ -217,9 +219,15 @@ app.post("/webhook", async (req, res) => {
     const isIncoming  = eventOk && fromMe !== true;
 
     // ── Diagnostic log so we can see exactly what was resolved ─
+    const phoneSource = body?.contact?.phone_number ? "contact.phone_number"
+                      : messageData?.from           ? "messageData.from"
+                      : messageData?.sender         ? "messageData.sender"
+                      : body?.from                  ? "body.from"
+                      : "(missing)";
     console.log("🔍 Parsed fields:", {
       event:       event       || "(none)",
       fromPhone:   fromPhone   || "(missing)",
+      phoneSource,
       messageText: messageText || "(missing)",
       fromMe:      fromMe      ?? "(not set)",
       eventOk,
