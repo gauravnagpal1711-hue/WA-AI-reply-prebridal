@@ -158,26 +158,40 @@ async function getAIReply(phone, userMessage) {
   addToHistory(phone, "user", userMessage);
   const history = getHistory(phone);
 
-  const response = await axios.post(
-    "https://api.anthropic.com/v1/messages",
-    {
-      model:      "claude-3-haiku-20240307",
-      max_tokens: 1024,
-      system:     SYSTEM_PROMPT,
-      messages:   history,
-    },
-    {
-      headers: {
-        "x-api-key":         ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "Content-Type":      "application/json",
-      },
+  try {
+    if (!ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
     }
-  );
 
-  const reply = response.data.content?.[0]?.text || "Ek second 🥰";
-  addToHistory(phone, "assistant", reply);
-  return reply;
+    const response = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model:      "claude-3-haiku-20240307",
+        max_tokens: 1024,
+        system:     SYSTEM_PROMPT,
+        messages:   history,
+      },
+      {
+        headers: {
+          "x-api-key":         ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "Content-Type":      "application/json",
+        },
+      }
+    );
+
+    const reply = response.data.content?.[0]?.text || "Ek second 🥰";
+    addToHistory(phone, "assistant", reply);
+    return reply;
+  } catch (err) {
+    console.error("❌ Claude API Error:", {
+      status:    err?.response?.status,
+      message:   err?.response?.data?.error?.message || err.message,
+      type:      err?.response?.data?.error?.type,
+      requestId: err?.response?.data?.error?.request_id,
+    });
+    throw err;
+  }
 }
 
 // ── WEBHOOK ENDPOINT ─────────────────────────────────────────
@@ -268,7 +282,11 @@ app.post("/webhook", async (req, res) => {
     }
 
   } catch (err) {
-    console.error("❌ Webhook processing error:", err?.response?.data || err.message);
+    console.error("❌ Webhook processing error:", {
+      message:  err.message,
+      apiError: err?.response?.data?.error,
+      stack:    err.stack,
+    });
   }
 });
 
@@ -288,4 +306,17 @@ app.listen(PORT, () => {
   console.log(`🔑 Anthropic Key: ${ANTHROPIC_API_KEY ? "✅ Set" : "❌ MISSING"}`);
   console.log(`📱 WAPI Instance: ${WAPI_INSTANCE_ID ? "✅ Set" : "❌ MISSING"}`);
   console.log(`🔐 WAPI Token:    ${WAPI_TOKEN ? "✅ Set" : "❌ MISSING"}`);
+
+  if (!ANTHROPIC_API_KEY) {
+    console.error("❌ CRITICAL: ANTHROPIC_API_KEY is not set!");
+    process.exit(1);
+  }
+  if (!WAPI_INSTANCE_ID) {
+    console.error("❌ CRITICAL: WAPI_INSTANCE_ID is not set!");
+    process.exit(1);
+  }
+  if (!WAPI_TOKEN) {
+    console.error("❌ CRITICAL: WAPI_TOKEN is not set!");
+    process.exit(1);
+  }
 });
