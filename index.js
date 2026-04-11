@@ -133,6 +133,49 @@ RULES:
 - NEVER confirm price, slot, or discount — always Garima ma'am will discuss
 - NEVER push for payment directly — always frame as "securing your slot"`;
 
+// ── VALIDATE ANTHROPIC API AT STARTUP ─────────────────────────
+async function validateAnthropicAPI() {
+  try {
+    console.log("🔍 Validating Anthropic API access...");
+
+    const response = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-3-5-haiku-20241022",
+        max_tokens: 10,
+        messages: [{ role: "user", content: "test" }],
+      },
+      {
+        headers: {
+          "x-api-key": ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("✅ Anthropic API is working!");
+    return true;
+  } catch (err) {
+    const errorMsg = err?.response?.data?.error?.message || err.message;
+    const errorType = err?.response?.data?.error?.type;
+
+    console.error("❌ Anthropic API validation failed!");
+    console.error("Error Type:", errorType);
+    console.error("Error Message:", errorMsg);
+
+    if (errorType === "authentication_error") {
+      console.error("→ Your ANTHROPIC_API_KEY is invalid or expired");
+    } else if (errorMsg?.includes("credit")) {
+      console.error("→ Your account has no credits. Go to https://console.anthropic.com and add payment");
+    } else if (errorType === "not_found_error") {
+      console.error("→ The Claude model is not available on your account");
+    }
+
+    return false;
+  }
+}
+
 // ── SEND MESSAGE via wapi.in.net ─────────────────────────────
 async function sendWhatsAppMessage(toPhone, message) {
   try {
@@ -158,26 +201,40 @@ async function getAIReply(phone, userMessage) {
   addToHistory(phone, "user", userMessage);
   const history = getHistory(phone);
 
-  const response = await axios.post(
-    "https://api.anthropic.com/v1/messages",
-    {
-      model:      "claude-3-5-haiku-20241022",
-      max_tokens: 1024,
-      system:     SYSTEM_PROMPT,
-      messages:   history,
-    },
-    {
-      headers: {
-        "x-api-key":         ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "Content-Type":      "application/json",
-      },
+  try {
+    if (!ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
     }
-  );
 
-  const reply = response.data.content?.[0]?.text || "Ek second 🥰";
-  addToHistory(phone, "assistant", reply);
-  return reply;
+    const response = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model:      "claude-3-5-haiku-20241022",
+        max_tokens: 1024,
+        system:     SYSTEM_PROMPT,
+        messages:   history,
+      },
+      {
+        headers: {
+          "x-api-key":         ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "Content-Type":      "application/json",
+        },
+      }
+    );
+
+    const reply = response.data.content?.[0]?.text || "Ek second 🥰";
+    addToHistory(phone, "assistant", reply);
+    return reply;
+  } catch (err) {
+    console.error("❌ Claude API Error:", {
+      status:    err?.response?.status,
+      message:   err?.response?.data?.error?.message || err.message,
+      type:      err?.response?.data?.error?.type,
+      requestId: err?.response?.data?.error?.request_id,
+    });
+    throw err;
+  }
 }
 
 // ── WEBHOOK ENDPOINT ─────────────────────────────────────────
@@ -268,7 +325,11 @@ app.post("/webhook", async (req, res) => {
     }
 
   } catch (err) {
-    console.error("❌ Webhook processing error:", err?.response?.data || err.message);
+    console.error("❌ Webhook processing error:", {
+      message:  err.message,
+      apiError: err?.response?.data?.error,
+      stack:    err.stack,
+    });
   }
 });
 
@@ -288,4 +349,26 @@ app.listen(PORT, () => {
   console.log(`🔑 Anthropic Key: ${ANTHROPIC_API_KEY ? "✅ Set" : "❌ MISSING"}`);
   console.log(`📱 WAPI Instance: ${WAPI_INSTANCE_ID ? "✅ Set" : "❌ MISSING"}`);
   console.log(`🔐 WAPI Token:    ${WAPI_TOKEN ? "✅ Set" : "❌ MISSING"}`);
+
+  // Hard validation - fail if env vars missing
+  if (!ANTHROPIC_API_KEY) {
+    console.error("❌ CRITICAL: ANTHROPIC_API_KEY is not set!");
+    process.exit(1);
+  }
+  if (!WAPI_INSTANCE_ID) {
+    console.error("❌ CRITICAL: WAPI_INSTANCE_ID is not set!");
+    process.exit(1);
+  }
+  if (!WAPI_TOKEN) {
+    console.error("❌ CRITICAL: WAPI_TOKEN is not set!");
+    process.exit(1);
+  }
+
+  // Validate Anthropic API works
+  validateAnthropicAPI().then(isValid => {
+    if (!isValid) {
+      console.error("❌ Cannot start without working Anthropic API");
+      process.exit(1);
+    }
+  });
 });
