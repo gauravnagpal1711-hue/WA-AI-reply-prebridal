@@ -16,6 +16,50 @@ const WAPI_INSTANCE_ID  = process.env.WAPI_INSTANCE_ID  || "";   // from wapi.in
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";   // from wapi.in.net dashboard
 const WAPI_BASE_URL     = "https://panel.wapi.in.net";           // wapi.in.net base URL
 
+// ── VALIDATE ANTHROPIC API AT STARTUP ─────────────────────────
+async function validateAnthropicAPI() {
+  try {
+    console.log("🔍 Validating Anthropic API access...");
+
+    const response = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-3-haiku-20240307",
+        max_tokens: 10,
+        messages: [{ role: "user", content: "test" }],
+      },
+      {
+        headers: {
+          "x-api-key": ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("✅ Anthropic API is working!");
+    return true;
+  } catch (err) {
+    const errorMsg = err?.response?.data?.error?.message || err.message;
+    const errorType = err?.response?.data?.error?.type;
+
+    console.error("❌ Anthropic API validation failed!");
+    console.error("Error Type:", errorType);
+    console.error("Error Message:", errorMsg);
+
+    if (errorType === "authentication_error") {
+      console.error("→ Your ANTHROPIC_API_KEY is invalid or expired");
+    } else if (errorMsg?.includes("credit")) {
+      console.error("→ Your account has no credits. Go to https://console.anthropic.com and add payment");
+    } else if (errorType === "not_found_error") {
+      console.error("→ The Claude model is not available on your account");
+      console.error("→ Check https://console.anthropic.com/account/billing/overview");
+    }
+
+    return false;
+  }
+}
+
 // ── CONVERSATION MEMORY (per phone number) ───────────────────
 // Stores last 20 messages per customer so AI remembers context
 const conversations = new Map();
@@ -288,4 +332,12 @@ app.listen(PORT, () => {
   console.log(`🔑 Anthropic Key: ${ANTHROPIC_API_KEY ? "✅ Set" : "❌ MISSING"}`);
   console.log(`📱 WAPI Instance: ${WAPI_INSTANCE_ID ? "✅ Set" : "❌ MISSING"}`);
   console.log(`🔐 WAPI Token:    ${WAPI_TOKEN ? "✅ Set" : "❌ MISSING"}`);
+
+  // Validate Anthropic API
+  validateAnthropicAPI().then(isValid => {
+    if (!isValid) {
+      console.error("❌ Cannot start without working Anthropic API");
+      process.exit(1);
+    }
+  });
 });
