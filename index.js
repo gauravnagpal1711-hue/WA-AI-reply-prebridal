@@ -1,3 +1,26 @@
+// ============================================================
+//  Beauty Box AI Agent — Webhook Server
+//  Connects wapi.in.net  ↔  Claude AI
+//  Author: Built for Garima Nagpal, Beauty Box Makeup Studio
+// ============================================================
+
+const express = require("express");
+const axios   = require("axios");
+const app     = express();
+app.use(express.json());
+
+// ── CONFIG (set these in Railway / .env) ─────────────────────
+const PORT              = process.env.PORT              || 3000;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";   // sk-ant-...
+const WAPI_INSTANCE_ID  = process.env.WAPI_INSTANCE_ID  || "";   // from wapi.in.net dashboard
+const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";   // from wapi.in.net dashboard
+const WAPI_VENDOR_UID   = "9e833748-c904-42b3-8401-5bc2a4eed399";  // Your vendor UID
+const WAPI_BASE_URL     = "https://panel.wapi.in.net/api";          // wapi.in.net base URL
+
+// ── CONVERSATION MEMORY (per phone number) ───────────────────
+// Stores last 20 messages per customer so AI remembers context
+const conversations = new Map();
+
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
   return conversations.get(phone);
