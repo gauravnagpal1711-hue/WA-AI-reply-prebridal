@@ -14,7 +14,7 @@ const PORT              = process.env.PORT              || 3000;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";   // sk-ant-...
 const WAPI_INSTANCE_ID  = process.env.WAPI_INSTANCE_ID  || "";   // from wapi.in.net dashboard
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";   // from wapi.in.net dashboard
-const WAPI_BASE_URL     = "https://panel.wapi.in.net";           // wapi.in.net base URL
+const WAPI_BASE_URL     = "https://panel.wapi.com";              // wapi.com base URL
 
 // ── CONVERSATION MEMORY (per phone number) ───────────────────
 // Stores last 20 messages per customer so AI remembers context
