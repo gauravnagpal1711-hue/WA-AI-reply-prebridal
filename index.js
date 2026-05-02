@@ -182,6 +182,7 @@ async function sendWhatsAppMessage(toPhone, message) {
   try {
     const url = `${WAPI_BASE_URL}/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
     console.log(`📤 Sending message to ${toPhone}...`);
+    console.log(`📋 Payload: { phone_number: "${toPhone}", body: "${message.substring(0, 50)}..." }`);
 
     const response = await axios.post(
       url,
@@ -189,17 +190,29 @@ async function sendWhatsAppMessage(toPhone, message) {
         phone_number: toPhone,  // e.g. "919999999999" (country code + number, no +)
         body: message,
       },
-      { headers: { "Content-Type": "application/json" } }
+      { 
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        } 
+      }
     );
 
     console.log(`✅ Sent to ${toPhone}: ${message.substring(0, 60)}...`);
+    console.log(`📤 WAPI Response:`, response.data);
     return response.data;
   } catch (err) {
     console.error(`❌ Failed to send message to ${toPhone}:`, {
       url: `${WAPI_BASE_URL}/${WAPI_VENDOR_UID}/contact/send-message`,
       status: err?.response?.status,
+      statusText: err?.response?.statusText,
       message: err?.response?.data?.message || err.message,
+      errors: err?.response?.data?.errors,
       data: err?.response?.data,
+      requestPayload: {
+        phone_number: toPhone,
+        body: message,
+      }
     });
     throw err;
   }
