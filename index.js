@@ -179,20 +179,27 @@ async function validateAnthropicAPI() {
 // ── SEND MESSAGE via wapi.in.net ─────────────────────────────
 async function sendWhatsAppMessage(toPhone, message) {
   try {
-    const url = `${WAPI_BASE_URL}/api/sendMessage`;
+    const url = `${WAPI_BASE_URL}/api/send`;
+    console.log(`📤 Sending to ${url}...`);
+
     await axios.post(
       url,
       {
         instanceId: WAPI_INSTANCE_ID,
         token:      WAPI_TOKEN,
-        to:         toPhone,   // e.g. "919999999999"  (country code + number, no +)
+        to:         toPhone,
         body:       message,
       },
       { headers: { "Content-Type": "application/json" } }
     );
     console.log(`✅ Sent to ${toPhone}: ${message.substring(0, 60)}...`);
   } catch (err) {
-    console.error(`❌ Failed to send message:`, err?.response?.data || err.message);
+    console.error(`❌ Failed to send message:`, {
+      url: `${WAPI_BASE_URL}/api/send`,
+      status: err?.response?.status,
+      message: err?.response?.data?.message || err.message,
+      data: err?.response?.data,
+    });
   }
 }
 
