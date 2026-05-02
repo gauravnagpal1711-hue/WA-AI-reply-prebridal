@@ -14,7 +14,8 @@ const PORT              = process.env.PORT              || 3000;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";   // sk-ant-...
 const WAPI_INSTANCE_ID  = process.env.WAPI_INSTANCE_ID  || "";   // from wapi.in.net dashboard
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";   // from wapi.in.net dashboard
-const WAPI_BASE_URL     = "https://panel.wapi.in.net";           // wapi.in.net base URL
+const WAPI_VENDOR_UID   = "9e833748-c904-42b3-8401-5bc2a4eed399";  // Your vendor UID
+const WAPI_BASE_URL     = "https://panel.wapi.in.net/api";          // wapi.in.net base URL
 
 // ── CONVERSATION MEMORY (per phone number) ───────────────────
 // Stores last 20 messages per customer so AI remembers context
@@ -179,20 +180,28 @@ async function validateAnthropicAPI() {
 // ── SEND MESSAGE via wapi.in.net ─────────────────────────────
 async function sendWhatsAppMessage(toPhone, message) {
   try {
-    const url = `${WAPI_BASE_URL}/api/sendMessage`;
-    await axios.post(
+    const url = `${WAPI_BASE_URL}/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
+    console.log(`📤 Sending message to ${toPhone}...`);
+
+    const response = await axios.post(
       url,
       {
-        instanceId: WAPI_INSTANCE_ID,
-        token:      WAPI_TOKEN,
-        to:         toPhone,   // e.g. "919999999999"  (country code + number, no +)
-        body:       message,
+        phone_number: toPhone,  // e.g. "919999999999" (country code + number, no +)
+        body: message,
       },
       { headers: { "Content-Type": "application/json" } }
     );
+
     console.log(`✅ Sent to ${toPhone}: ${message.substring(0, 60)}...`);
+    return response.data;
   } catch (err) {
-    console.error(`❌ Failed to send message:`, err?.response?.data || err.message);
+    console.error(`❌ Failed to send message to ${toPhone}:`, {
+      url: `${WAPI_BASE_URL}/${WAPI_VENDOR_UID}/contact/send-message`,
+      status: err?.response?.status,
+      message: err?.response?.data?.message || err.message,
+      data: err?.response?.data,
+    });
+    throw err;
   }
 }
 
