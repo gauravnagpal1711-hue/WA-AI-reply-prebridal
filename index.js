@@ -141,7 +141,7 @@ async function validateAnthropicAPI() {
     const response = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
-        model: "claude-3-5-haiku-20241022",
+        model: "claude-sonnet-4-20250514",
         max_tokens: 10,
         messages: [{ role: "user", content: "test" }],
       },
@@ -209,7 +209,7 @@ async function getAIReply(phone, userMessage) {
     const response = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
-        model:      "claude-3-5-haiku-20241022",
+        model:      "claude-sonnet-4-20250514",
         max_tokens: 1024,
         system:     SYSTEM_PROMPT,
         messages:   history,
