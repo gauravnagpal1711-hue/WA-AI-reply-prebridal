@@ -14,8 +14,7 @@ const PORT              = process.env.PORT              || 3000;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";   // sk-ant-...
 const WAPI_INSTANCE_ID  = process.env.WAPI_INSTANCE_ID  || "";   // from wapi.in.net dashboard
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";   // from wapi.in.net dashboard
-const WAPI_VENDOR_UID   = "9e833748-c904-42b3-8401-5bc2a4eed399";  // Your vendor UID
-const WAPI_BASE_URL     = "https://panel.wapi.in.net/api";          // wapi.in.net base URL
+const WAPI_BASE_URL     = "https://panel.wapi.in.net";           // wapi.in.net base URL
 
 // ── CONVERSATION MEMORY (per phone number) ───────────────────
 // Stores last 20 messages per customer so AI remembers context
@@ -134,87 +133,23 @@ RULES:
 - NEVER confirm price, slot, or discount — always Garima ma'am will discuss
 - NEVER push for payment directly — always frame as "securing your slot"`;
 
-// ── VALIDATE ANTHROPIC API AT STARTUP ─────────────────────────
-async function validateAnthropicAPI() {
-  try {
-    console.log("🔍 Validating Anthropic API access...");
-
-    const response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 10,
-        messages: [{ role: "user", content: "test" }],
-      },
-      {
-        headers: {
-          "x-api-key": ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    console.log("✅ Anthropic API is working!");
-    return true;
-  } catch (err) {
-    const errorMsg = err?.response?.data?.error?.message || err.message;
-    const errorType = err?.response?.data?.error?.type;
-
-    console.error("❌ Anthropic API validation failed!");
-    console.error("Error Type:", errorType);
-    console.error("Error Message:", errorMsg);
-
-    if (errorType === "authentication_error") {
-      console.error("→ Your ANTHROPIC_API_KEY is invalid or expired");
-    } else if (errorMsg?.includes("credit")) {
-      console.error("→ Your account has no credits. Go to https://console.anthropic.com and add payment");
-    } else if (errorType === "not_found_error") {
-      console.error("→ The Claude model is not available on your account");
-    }
-
-    return false;
-  }
-}
-
 // ── SEND MESSAGE via wapi.in.net ─────────────────────────────
 async function sendWhatsAppMessage(toPhone, message) {
   try {
-    const url = `${WAPI_BASE_URL}/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
-    console.log(`📤 Sending message to ${toPhone}...`);
-    console.log(`📋 Payload: { phone_number: "${toPhone}", message_body: "${message.substring(0, 50)}..." }`);
-
-    const response = await axios.post(
+    const url = `${WAPI_BASE_URL}/api/sendMessage`;
+    await axios.post(
       url,
       {
-        phone_number: toPhone,  // e.g. "919999999999" (country code + number, no +)
-        message_body: message,
+        instanceId: WAPI_INSTANCE_ID,
+        token:      WAPI_TOKEN,
+        to:         toPhone,   // e.g. "919999999999"  (country code + number, no +)
+        body:       message,
       },
-      { 
-        headers: { 
-          "Content-Type": "application/json",
-          "Accept": "application/json"
-        } 
-      }
+      { headers: { "Content-Type": "application/json" } }
     );
-
     console.log(`✅ Sent to ${toPhone}: ${message.substring(0, 60)}...`);
-    console.log(`📤 WAPI Response:`, response.data);
-    return response.data;
   } catch (err) {
-    console.error(`❌ Failed to send message to ${toPhone}:`, {
-      url: `${WAPI_BASE_URL}/${WAPI_VENDOR_UID}/contact/send-message`,
-      status: err?.response?.status,
-      statusText: err?.response?.statusText,
-      message: err?.response?.data?.message || err.message,
-      errors: err?.response?.data?.errors,
-      data: err?.response?.data,
-      requestPayload: {
-        phone_number: toPhone,
-        message_body: message,
-      }
-    });
-    throw err;
+    console.error(`❌ Failed to send message:`, err?.response?.data || err.message);
   }
 }
 
@@ -223,107 +158,52 @@ async function getAIReply(phone, userMessage) {
   addToHistory(phone, "user", userMessage);
   const history = getHistory(phone);
 
-  try {
-    if (!ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
-    }
-
-    const response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model:      "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        system:     SYSTEM_PROMPT,
-        messages:   history,
+  const response = await axios.post(
+    "https://api.anthropic.com/v1/messages",
+    {
+      model:      "claude-sonnet-4-20250514",
+      max_tokens: 1024,
+      system:     SYSTEM_PROMPT,
+      messages:   history,
+    },
+    {
+      headers: {
+        "x-api-key":         ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "Content-Type":      "application/json",
       },
-      {
-        headers: {
-          "x-api-key":         ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type":      "application/json",
-        },
-      }
-    );
+    }
+  );
 
-    const reply = response.data.content?.[0]?.text || "Ek second 🥰";
-    addToHistory(phone, "assistant", reply);
-    return reply;
-  } catch (err) {
-    console.error("❌ Claude API Error:", {
-      status:    err?.response?.status,
-      message:   err?.response?.data?.error?.message || err.message,
-      type:      err?.response?.data?.error?.type,
-      requestId: err?.response?.data?.error?.request_id,
-    });
-    throw err;
-  }
+  const reply = response.data.content?.[0]?.text || "Ek second 🥰";
+  addToHistory(phone, "assistant", reply);
+  return reply;
 }
 
 // ── WEBHOOK ENDPOINT ─────────────────────────────────────────
-// panel.wapi.com will POST here every time a customer sends a message
+// wapi.in.net will POST here every time a customer sends a message
 app.post("/webhook", async (req, res) => {
   // Always respond 200 immediately so wapi doesn't retry
   res.sendStatus(200);
 
   try {
     const body = req.body;
-
-    // ── Log full raw payload for debugging ────────────────────
-    console.log("📩 Incoming webhook (raw):", JSON.stringify(body, null, 2));
+    console.log("📩 Incoming webhook:", JSON.stringify(body, null, 2));
 
     // ── Parse incoming message ────────────────────────────────
-    // panel.wapi.com sends one of two shapes:
-    //   Shape A: { event, data: { from, fromMe, body, type, ... } }
-    //   Shape B: { event, message: { from, body, ... } }
-    // We try both and fall back gracefully.
+    // wapi.in.net payload format (adjust field names if needed
+    // after checking your actual webhook in the dashboard logs)
+    const event       = body?.event || body?.type || "";
+    const messageData = body?.data  || body?.message || body;
 
-    const event = body?.event || body?.type || "";
-
-    // Resolve the nested message object — prefer `data`, then `message`, then root
-    const messageData = body?.data || body?.message || body;
-
-    // Extract fields from the resolved message object, with root-level fallbacks
-    const messageText = messageData?.body    || messageData?.text    || messageData?.message || "";
-    // panel.wapi.com places the sender's number in body.contact.phone_number;
-    // fall back to the message object and root level for other providers.
-    const fromPhone   = body?.contact?.phone_number || messageData?.from || messageData?.sender || body?.from || "";
-
-    // `fromMe` can live inside the nested object (Shape A) or at root level
-    const fromMe      = messageData?.fromMe  ?? body?.fromMe         ?? null;
-
-    // Determine if this is an inbound customer message:
-    //   - event must be "message" or "incoming" (or absent, for providers that omit it)
-    //   - fromMe must NOT be explicitly true (null/undefined = assume inbound)
-    const eventOk     = !event || event === "message" || event === "incoming";
-    const isIncoming  = eventOk && fromMe !== true;
-
-    // ── Diagnostic log so we can see exactly what was resolved ─
-    const phoneSource = body?.contact?.phone_number ? "contact.phone_number"
-                      : messageData?.from           ? "messageData.from"
-                      : messageData?.sender         ? "messageData.sender"
-                      : body?.from                  ? "body.from"
-                      : "(missing)";
-    console.log("🔍 Parsed fields:", {
-      event:       event       || "(none)",
-      fromPhone:   fromPhone   || "(missing)",
-      phoneSource,
-      messageText: messageText || "(missing)",
-      fromMe:      fromMe      ?? "(not set)",
-      eventOk,
-      isIncoming,
-    });
+    // Only process incoming text messages from customers
+    const isIncoming  = event === "message" || event === "incoming" || body?.fromMe === false;
+    const messageText = messageData?.body || messageData?.text || messageData?.message || "";
+    const fromPhone   = messageData?.from  || messageData?.sender || body?.from || "";
 
     // Skip if it's our own sent message, or not a text message
-    if (!isIncoming) {
-      console.log(`⏭️ Skipping — not an inbound message (event="${event}", fromMe=${fromMe})`);
-      return;
-    }
-    if (!messageText) {
-      console.log("⏭️ Skipping — no message text found in payload");
-      return;
-    }
-    if (!fromPhone) {
-      console.log("⏭️ Skipping — could not determine sender phone number");
+    if (!isIncoming || !messageText || !fromPhone) {
+      console.log("⏭️ Skipping non-customer message");
       return;
     }
 
@@ -347,11 +227,7 @@ app.post("/webhook", async (req, res) => {
     }
 
   } catch (err) {
-    console.error("❌ Webhook processing error:", {
-      message:  err.message,
-      apiError: err?.response?.data?.error,
-      stack:    err.stack,
-    });
+    console.error("❌ Webhook processing error:", err?.response?.data || err.message);
   }
 });
 
@@ -371,26 +247,4 @@ app.listen(PORT, () => {
   console.log(`🔑 Anthropic Key: ${ANTHROPIC_API_KEY ? "✅ Set" : "❌ MISSING"}`);
   console.log(`📱 WAPI Instance: ${WAPI_INSTANCE_ID ? "✅ Set" : "❌ MISSING"}`);
   console.log(`🔐 WAPI Token:    ${WAPI_TOKEN ? "✅ Set" : "❌ MISSING"}`);
-
-  // Hard validation - fail if env vars missing
-  if (!ANTHROPIC_API_KEY) {
-    console.error("❌ CRITICAL: ANTHROPIC_API_KEY is not set!");
-    process.exit(1);
-  }
-  if (!WAPI_INSTANCE_ID) {
-    console.error("❌ CRITICAL: WAPI_INSTANCE_ID is not set!");
-    process.exit(1);
-  }
-  if (!WAPI_TOKEN) {
-    console.error("❌ CRITICAL: WAPI_TOKEN is not set!");
-    process.exit(1);
-  }
-
-  // Validate Anthropic API works
-  validateAnthropicAPI().then(isValid => {
-    if (!isValid) {
-      console.error("❌ Cannot start without working Anthropic API");
-      process.exit(1);
-    }
-  });
 });
