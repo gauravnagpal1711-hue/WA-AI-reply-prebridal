@@ -33,8 +33,8 @@ function addToHistory(phone, role, content) {
   if (history.length > 20) history.splice(0, history.length - 20);
 }
 
-// ── SYSTEM PROMPT ─────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are an AI assistant for Beauty Box Makeup Studio by Garima Nagpal, located in Vikaspuri, Delhi (near Janakpuri West Metro Station).
+// ── SYSTEM PROMPT (from environment variable) ──────────────────
+const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || `You are an AI assistant for Beauty Box Makeup Studio by Garima Nagpal, located in Vikaspuri, Delhi (near Janakpuri West Metro Station).
 
 You reply to leads from Facebook and Instagram ads enquiring about Pre-Bridal packages.
 
