@@ -1,6 +1,6 @@
 // ============================================================
 //  Beauty Box AI Agent — Webhook Server
-//  Supports WhatsApp Cloud API payload format
+//  Only activates for Meta Lead Ad messages
 // ============================================================
 
 const express = require("express");
@@ -12,6 +12,32 @@ const PORT              = process.env.PORT              || 3000;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const WAPI_VENDOR_UID   = process.env.WAPI_VENDOR_UID   || process.env.WAPI_INSTANCE_ID || "";
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";
+
+// ── META LEAD TRIGGER ─────────────────────────────────────────
+// AI only activates when message contains this exact Meta phrase
+const META_TRIGGER = "i filled in your form and would like to know more about your business";
+
+function isMetaLead(text) {
+  return text.toLowerCase().includes(META_TRIGGER);
+}
+
+// ── EXTRACT LEAD DETAILS FROM META MESSAGE ────────────────────
+// Parses: full_name, phone_number, when_is_your_wedding_date, city/area
+function extractLeadDetails(text) {
+  const details = {};
+  const lines   = text.split("\n").map(l => l.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (lower.startsWith("full_name:"))                  details.name        = line.split(":")[1]?.trim();
+    if (lower.startsWith("phone_number:"))               details.phone_lead  = line.split(":")[1]?.trim();
+    if (lower.startsWith("when_is_your_wedding_date:"))  details.wedding     = line.split(":").slice(1).join(":").trim();
+    if (lower.startsWith("city/area:"))                  details.city        = line.split(":")[1]?.trim();
+    if (lower.startsWith("city:"))                       details.city        = line.split(":")[1]?.trim();
+    if (lower.startsWith("area:"))                       details.city        = line.split(":")[1]?.trim();
+  }
+  return details;
+}
 
 // ── CONVERSATION MEMORY ───────────────────────────────────────
 const conversations = new Map();
@@ -36,14 +62,22 @@ PATH B: Book a studio visit — free skin check + plan discussion (for hesitant 
 
 Never push. Feel like a caring beauty expert, not a salesperson.
 
+FIRST MESSAGE HANDLING:
+When you receive a lead, you will be given their details: name, wedding date, city.
+- Greet them warmly by first name
+- Acknowledge their wedding date and city
+- If wedding is within 1-2 months: show excitement, say perfect timing
+- If wedding is 3+ months: say great, skincare can start now
+- Then ask about their skin type OR current skincare routine
+- Keep first reply warm and short — 2 messages maximum
+
 CONVERSATION FLOW:
-1. Greet warmly using their name if known, confirm wedding date + city
-2. Share package info
-3. Ask: "Are you following any skincare routine currently?"
-4. Ask skin type: dry / oily / normal / combination
-5. Share skincare tips based on skin type
-6. Handle location/distance questions
-7. Move to Path A or Path B
+1. Greet with name, acknowledge wedding date + city
+2. Ask skin type: dry / oily / normal / combination
+3. Ask if they follow any skincare routine currently
+4. Share skincare tips based on skin type
+5. Handle location/distance questions
+6. Move to Path A or Path B
 
 TONE: Short 2-3 line messages. Natural Hinglish. Warm like a caring beauty didi. Light emojis 🥰 ✨. End with ONE question always.
 IMPORTANT: Separate multiple messages with the | character.
@@ -102,9 +136,8 @@ async function sendMessage(toPhone, text) {
 }
 
 // ── CALL CLAUDE ───────────────────────────────────────────────
-async function getAIReply(phone, name, userMsg) {
-  const msgWithContext = name ? `[Customer name: ${name}] ${userMsg}` : userMsg;
-  addToHistory(phone, "user", msgWithContext);
+async function getAIReply(phone, contextMsg) {
+  addToHistory(phone, "user", contextMsg);
 
   const res = await axios.post(
     "https://api.anthropic.com/v1/messages",
@@ -129,44 +162,33 @@ async function getAIReply(phone, name, userMsg) {
 }
 
 // ── PARSE INCOMING WEBHOOK ────────────────────────────────────
-// Handles WhatsApp Cloud API format:
-// body.entry[0].changes[0].value.messages[0]
 function parseWebhook(body) {
   try {
-    // ── FORMAT 1: WhatsApp Cloud API (Meta) ──────────────────
-    // This is what wapi.in.net forwards in the whatsapp_webhook_payload
-    const entry    = body?.entry?.[0];
-    const change   = entry?.changes?.[0];
-    const value    = change?.value;
-    const messages = value?.messages;
-
-    if (messages && messages.length > 0) {
+    // FORMAT 1: WhatsApp Cloud API (Meta format via wapi.in.net)
+    const messages = body?.entry?.[0]?.changes?.[0]?.value?.messages;
+    if (messages?.length > 0) {
       const msg      = messages[0];
-      const contacts = value?.contacts || [];
-      const contact  = contacts[0]     || {};
-
-      const phone    = msg?.from        || "";
-      const name     = contact?.profile?.name || null;
-      const type     = msg?.type        || "";
-      const text     = msg?.text?.body  || msg?.body || "";
+      const contacts = body?.entry?.[0]?.changes?.[0]?.value?.contacts || [];
+      const contact  = contacts[0] || {};
+      const type     = msg?.type || "";
       const hasMedia = ["image","audio","video","document","sticker"].includes(type);
-
-      console.log(`📦 FORMAT: WhatsApp Cloud API`);
-      return { phone, name, text, hasMedia, type };
+      return {
+        phone:    msg?.from || "",
+        name:     contact?.profile?.name || null,
+        text:     msg?.text?.body || msg?.body || "",
+        hasMedia,
+      };
     }
 
-    // ── FORMAT 2: wapi.in.net native format ──────────────────
-    // body.contact + body.message
-    const contact2 = body?.contact || {};
-    const message2 = body?.message || {};
-    const phone2   = contact2?.phone_number || "";
-    const name2    = [contact2?.first_name, contact2?.last_name].filter(Boolean).join(" ") || null;
-    const text2    = message2?.body || "";
-    const hasMedia2 = !!message2?.media?.type;
-
+    // FORMAT 2: wapi.in.net native
+    const phone2 = body?.contact?.phone_number || "";
     if (phone2) {
-      console.log(`📦 FORMAT: wapi.in.net native`);
-      return { phone: phone2, name: name2, text: text2, hasMedia: hasMedia2, type: "text" };
+      return {
+        phone:    phone2,
+        name:     [body?.contact?.first_name, body?.contact?.last_name].filter(Boolean).join(" ") || null,
+        text:     body?.message?.body || "",
+        hasMedia: !!body?.message?.media?.type,
+      };
     }
 
     return null;
@@ -178,37 +200,54 @@ function parseWebhook(body) {
 
 // ── WEBHOOK ENDPOINT ──────────────────────────────────────────
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200); // Always respond immediately
+  res.sendStatus(200);
 
   try {
-    console.log("\n📩 Webhook received:", JSON.stringify(req.body, null, 2));
-
     const parsed = parseWebhook(req.body);
-
     if (!parsed || !parsed.phone) {
-      console.log("⏭️ Skipped — could not parse phone number");
+      console.log("⏭️ Skipped — could not parse");
       return;
     }
 
     const { phone, name, text, hasMedia } = parsed;
-    console.log(`👤 From: ${phone} (${name || "Unknown"})`);
-    console.log(`💬 Text: "${text}" | Media: ${hasMedia}`);
+    console.log(`📩 From: ${phone} | Text: "${text.substring(0,80)}"`);
 
-    // Skip if no content at all
     if (!text && !hasMedia) {
-      console.log("⏭️ Skipped — empty message");
+      console.log("⏭️ Skipped — empty");
       return;
     }
 
-    // Media with no text
-    if (hasMedia && !text) {
-      await sendMessage(phone, "Main sirf text messages samajh sakti hoon abhi 🥰 Please apna sawaal text mein likhein!");
+    // ── CHECK: Is this a new Meta lead? ──────────────────────
+    const isNewLead    = isMetaLead(text);
+    const hasHistory   = conversations.has(phone) && getHistory(phone).length > 0;
+
+    // If not a Meta lead AND no existing conversation → ignore completely
+    if (!isNewLead && !hasHistory) {
+      console.log(`⏭️ Ignored — not a Meta lead and no existing conversation: ${phone}`);
       return;
     }
 
-    // Get AI reply and send
-    const reply = await getAIReply(phone, name, text);
-    console.log(`🤖 AI Reply: ${reply}`);
+    // ── BUILD CONTEXT MESSAGE FOR AI ─────────────────────────
+    let contextMsg = text;
+
+    if (isNewLead) {
+      // Extract lead details from Meta message
+      const lead = extractLeadDetails(text);
+      console.log(`🎯 META LEAD detected! Name: ${lead.name} | Wedding: ${lead.wedding} | City: ${lead.city}`);
+
+      // Build a clean context message for Claude
+      contextMsg = `New lead from Meta ad:
+Name: ${lead.name || name || "not provided"}
+Wedding date: ${lead.wedding || "not provided"}
+City/Area: ${lead.city || "not provided"}
+Their message: ${text}
+
+Please greet them warmly by name and start the conversation.`;
+    }
+
+    // ── GET AI REPLY AND SEND ─────────────────────────────────
+    const reply = await getAIReply(phone, contextMsg);
+    console.log(`🤖 Reply: ${reply.substring(0, 100)}`);
 
     const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
     for (let i = 0; i < parts.length; i++) {
@@ -217,21 +256,23 @@ app.post("/webhook", async (req, res) => {
     }
 
   } catch (err) {
-    console.error("❌ Webhook error:", err?.response?.data || err.message);
+    console.error("❌ Error:", err?.response?.data || err.message);
   }
 });
 
 // ── HEALTH CHECK ──────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({
-    agent:  "Beauty Box AI Agent ✅",
-    claude: ANTHROPIC_API_KEY ? "Connected ✅" : "Missing ❌",
-    wapi:   WAPI_VENDOR_UID   ? "Connected ✅" : "Missing ❌",
+    agent:   "Beauty Box AI Agent ✅",
+    trigger: "Meta lead form messages only",
+    claude:  ANTHROPIC_API_KEY ? "Connected ✅" : "Missing ❌",
+    wapi:    WAPI_VENDOR_UID   ? "Connected ✅" : "Missing ❌",
   });
 });
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Beauty Box Agent running on port ${PORT}`);
+  console.log(`🎯 Trigger: Meta lead form messages only`);
   console.log(`🤖 Claude:     ${ANTHROPIC_API_KEY ? "✅" : "❌ MISSING"}`);
   console.log(`📱 WAPI UID:   ${WAPI_VENDOR_UID  ? "✅" : "❌ MISSING"}`);
   console.log(`🔐 WAPI Token: ${WAPI_TOKEN       ? "✅" : "❌ MISSING"}\n`);
