@@ -150,18 +150,71 @@ async function sendPDF(toPhone) {
     console.log("⚠️ APP_URL not set — cannot send PDF");
     return;
   }
+
+  const apiUrl = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
+  console.log(`📄 Trying to send PDF to ${toPhone}`);
+  console.log(`📄 PDF URL: ${pdfUrl}`);
+
+  // Try Format 1 — message_type + document_url
   try {
-    const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
-    await axios.post(url, {
+    const res = await axios.post(apiUrl, {
       phone_number:  toPhone,
       message_type:  "document",
       document_url:  pdfUrl,
       document_name: PDF_NAME,
     });
-    console.log(`✅ PDF → ${toPhone}: ${pdfUrl}`);
+    console.log(`✅ PDF sent (Format 1):`, res.data);
+    return;
   } catch (err) {
-    console.error(`❌ PDF failed:`, err?.response?.data || err.message);
-    // Fallback: send as text link
+    console.log(`❌ Format 1 failed:`, err?.response?.data || err.message);
+  }
+
+  // Try Format 2 — type + url + filename
+  try {
+    const res = await axios.post(apiUrl, {
+      phone_number: toPhone,
+      type:         "document",
+      url:          pdfUrl,
+      filename:     PDF_NAME,
+    });
+    console.log(`✅ PDF sent (Format 2):`, res.data);
+    return;
+  } catch (err) {
+    console.log(`❌ Format 2 failed:`, err?.response?.data || err.message);
+  }
+
+  // Try Format 3 — media object nested
+  try {
+    const res = await axios.post(apiUrl, {
+      phone_number: toPhone,
+      message_type: "document",
+      media: {
+        url:      pdfUrl,
+        filename: PDF_NAME,
+      },
+    });
+    console.log(`✅ PDF sent (Format 3):`, res.data);
+    return;
+  } catch (err) {
+    console.log(`❌ Format 3 failed:`, err?.response?.data || err.message);
+  }
+
+  // Try Format 4 — document object nested
+  try {
+    const res = await axios.post(apiUrl, {
+      phone_number: toPhone,
+      message_type: "document",
+      document: {
+        link:     pdfUrl,
+        filename: PDF_NAME,
+      },
+    });
+    console.log(`✅ PDF sent (Format 4):`, res.data);
+    return;
+  } catch (err) {
+    console.log(`❌ Format 4 failed:`, err?.response?.data || err.message);
+    // All formats failed — log and send as link
+    console.log(`⚠️ All PDF formats failed. Check Railway logs for correct format.`);
     await sendText(toPhone, `Hamare package ki poori details yahan hai 🥰\n${pdfUrl}`);
   }
 }
