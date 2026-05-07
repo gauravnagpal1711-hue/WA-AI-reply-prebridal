@@ -160,6 +160,7 @@ async function sendPDF(toPhone) {
     const res = await axios.post(apiUrl, {
       phone_number:  toPhone,
       message_type:  "document",
+      message_body:  PDF_NAME,
       document_url:  pdfUrl,
       document_name: PDF_NAME,
     });
@@ -173,7 +174,8 @@ async function sendPDF(toPhone) {
   try {
     const res = await axios.post(apiUrl, {
       phone_number: toPhone,
-      type:         "document",
+      message_type: "document",
+      message_body: PDF_NAME,
       url:          pdfUrl,
       filename:     PDF_NAME,
     });
@@ -188,10 +190,9 @@ async function sendPDF(toPhone) {
     const res = await axios.post(apiUrl, {
       phone_number: toPhone,
       message_type: "document",
-      media: {
-        url:      pdfUrl,
-        filename: PDF_NAME,
-      },
+      message_body: PDF_NAME,
+      media_url:    pdfUrl,
+      filename:     PDF_NAME,
     });
     console.log(`✅ PDF sent (Format 3):`, res.data);
     return;
@@ -204,10 +205,9 @@ async function sendPDF(toPhone) {
     const res = await axios.post(apiUrl, {
       phone_number: toPhone,
       message_type: "document",
-      document: {
-        link:     pdfUrl,
-        filename: PDF_NAME,
-      },
+      message_body: PDF_NAME,
+      media:        pdfUrl,
+      filename:     PDF_NAME,
     });
     console.log(`✅ PDF sent (Format 4):`, res.data);
     return;
