@@ -1,7 +1,6 @@
 // ============================================================
 //  Beauty Box AI Agent — Webhook Server
-//  Connects wapi.in.net  ↔  Claude AI
-//  Author: Built for Garima Nagpal, Beauty Box Makeup Studio
+//  Supports WhatsApp Cloud API payload format
 // ============================================================
 
 const express = require("express");
@@ -9,27 +8,21 @@ const axios   = require("axios");
 const app     = express();
 app.use(express.json());
 
-// ── CONFIG (set these in Railway / .env) ─────────────────────
 const PORT              = process.env.PORT              || 3000;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";   // sk-ant-...
-const WAPI_INSTANCE_ID  = process.env.WAPI_INSTANCE_ID  || "";   // from wapi.in.net dashboard
-const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";   // from wapi.in.net dashboard
-const WAPI_BASE_URL     = "https://panel.wapi.in.net";           // wapi.in.net base URL
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const WAPI_VENDOR_UID   = process.env.WAPI_VENDOR_UID   || process.env.WAPI_INSTANCE_ID || "";
+const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";
 
-// ── CONVERSATION MEMORY (per phone number) ───────────────────
-// Stores last 20 messages per customer so AI remembers context
+// ── CONVERSATION MEMORY ───────────────────────────────────────
 const conversations = new Map();
-
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
   return conversations.get(phone);
 }
-
 function addToHistory(phone, role, content) {
-  const history = getHistory(phone);
-  history.push({ role, content });
-  // Keep only last 20 messages to avoid token overflow
-  if (history.length > 20) history.splice(0, history.length - 20);
+  const h = getHistory(phone);
+  h.push({ role, content });
+  if (h.length > 20) h.splice(0, h.length - 20);
 }
 
 // ── SYSTEM PROMPT ─────────────────────────────────────────────
@@ -38,133 +31,88 @@ const SYSTEM_PROMPT = `You are an AI assistant for Beauty Box Makeup Studio by G
 You reply to leads from Facebook and Instagram ads enquiring about Pre-Bridal packages.
 
 YOUR GOAL: Engage warmly, collect info, share value — then guide every customer toward ONE of two next steps:
-→ PATH A: Pay a small advance to confirm their slot (for ready customers)
-→ PATH B: Book a studio visit — free skin check + plan discussion (for hesitant customers)
+PATH A: Pay a small advance to confirm their slot (for ready customers)
+PATH B: Book a studio visit — free skin check + plan discussion (for hesitant customers)
 
-Never push. The conversation should feel like talking to a caring beauty expert — not a salesperson.
+Never push. Feel like a caring beauty expert, not a salesperson.
 
 CONVERSATION FLOW:
-1. Greet warmly using their name if known → confirm exact wedding date + city/area
-2. Mention package is being shared → "This is our complete pre-bridal package 🥰"
+1. Greet warmly using their name if known, confirm wedding date + city
+2. Share package info
 3. Ask: "Are you following any skincare routine currently?"
-4. Ask: "Aapki skin type kya hai — dry, oily, normal ya combination?"
+4. Ask skin type: dry / oily / normal / combination
 5. Share skincare tips based on skin type
-6. Handle location/distance questions naturally
-7. Read signals → move to Path A or Path B closing
+6. Handle location/distance questions
+7. Move to Path A or Path B
 
-TONE & STYLE:
-- Short messages — 2 to 3 lines max
-- Natural Hinglish — mix Hindi and English casually
-- Warm, like a caring beauty didi 🥰
-- Light emojis: 🥰 ✨ 💆‍♀️ 🛑
-- Always end with ONE question
-- IMPORTANT: If you want to send multiple short messages, separate them with the | character
-  Example: "Hi Priya! 🥰 Congratulations!|Aapki shaadi ki date confirm karein?"
+TONE: Short 2-3 line messages. Natural Hinglish. Warm like a caring beauty didi. Light emojis 🥰 ✨. End with ONE question always.
+IMPORTANT: Separate multiple messages with the | character.
 
-PATH A — ADVANCE BOOKING (ready customer):
-Signals: She's asking about next steps, slots, or seems decided.
-Message: "Bahut accha! 🥰 Ek small advance se aap apna slot abhi secure kar sakti hain.|Kya aap abhi advance de kar slot confirm karna chahogi?"
-If YES → "Perfect! Main Garima ma'am ko abhi inform karti hoon — wo aapko QR code share kar deti hain 🥰"
+PATH A (ready customer - asking about slots/next steps):
+"Bahut accha! Ek small advance se aap apna slot abhi secure kar sakti hain.|Kya aap abhi advance de kar slot confirm karna chahogi?"
+If YES: "Perfect! Main Garima ma'am ko abhi inform karti hoon - wo aapko QR code share kar deti hain 🥰"
 
-PATH B — STUDIO VISIT (hesitant customer):
-Signals: She's uncertain, asking many questions, or hesitant about distance.
-Message: "Ek suggestion hai 🥰 Ek baar hamare studio visit karein —|Main personally aapki skin check karungi, sitting plan discuss karenge. Koi pressure nahi!|Kab convenient rahega aapko?"
-If agrees → "Bahut accha! Main Garima ma'am ko inform karti hoon — wo aapse timing confirm kar lengi 🥰"
+PATH B (hesitant - many questions or far away):
+"Ek suggestion hai 🥰 Ek baar hamare studio visit karein -|Main personally aapki skin check karungi, sitting plan discuss karenge. Koi pressure nahi!|Kab convenient rahega aapko?"
+If agrees: "Bahut accha! Main Garima ma'am ko inform karti hoon - wo aapse timing confirm kar lengi 🥰"
 
-LONG DISTANCE — 3 STEP APPROACH:
-Step 1 — Reassure: "Metro se connected hai, sirf 2-3 sittings chahiye 🥰"
-Step 2 — Value + urgency: "Hum sirf 20 brides ko is heavy discount mein le rahe hain. Yeh services approx ₹20,000 ki hain!"
-Step 3 — Honest release (if still hesitant): "Bilkul samajh sakti hoon! Aap nearby salons bhi check kar sakti hain 🥰 Agar kabhi consider karein toh hum yahaan hain!"
+LONG DISTANCE (3 steps):
+Step 1: "Metro se connected hai, sirf 2-3 sittings chahiye 🥰"
+Step 2: "Hum sirf 20 brides ko is heavy discount mein le rahe hain. Services approx Rs.20,000 ki hain!"
+Step 3 if still hesitant: "Bilkul samajh sakti hoon! Aap nearby salons bhi check kar sakti hain 🥰 Agar kabhi consider karein toh hum yahaan hain!"
 
 METRO ROUTES:
-- South Ex / Sarita Vihar / South Delhi: ~35-40 min via Yellow Line → Janakpuri West
-- Connaught Place / Rajiv Chowk: ~25 min Yellow Line → Janakpuri West
-- Dwarka: ~15 min Pink Line → Janakpuri West
-- Shahdara / East Delhi: ~53 min Pink Line from Pitampura → Janakpuri West
-- Noida: ~45-50 min Blue Line → Rajiv Chowk → Yellow Line → Janakpuri West
+- South Ex / Sarita Vihar / South Delhi: ~35-40 min Yellow Line to Janakpuri West
+- Connaught Place: ~25 min Yellow Line to Janakpuri West
+- Dwarka: ~15 min Pink Line to Janakpuri West
+- Shahdara / East Delhi: ~53 min Pink Line from Pitampura to Janakpuri West
+- Noida: ~45-50 min Blue Line to Rajiv Chowk then Yellow Line to Janakpuri West
 
-STUDIO INFO:
-Location: Vikaspuri, Delhi | Near Janakpuri West Metro
-Google Maps: https://share.google/Wg5sfGr9GyYiNuzGB
-Instagram: https://www.instagram.com/garimanagpalmua/
+STUDIO: Vikaspuri Delhi. Near Janakpuri West Metro. Maps: https://share.google/Wg5sfGr9GyYiNuzGB Instagram: https://www.instagram.com/garimanagpalmua/
 
-PACKAGE INFO:
-Complete pre-bridal: skin + hair + makeup care (all in poster)
-Ideal start: 30-35 days before wedding | 2-4 sittings | 10-15 day intervals
-40 days left: can complete in 3 sittings
-Value: approx ₹20,000 (heavy discount for 20 brides only)
-Add-ons: Bikini wax ₹1,000 | Nail extensions from ₹500
-Final pricing + discount → Garima ma'am confirms personally
+PACKAGE: Complete pre-bridal skin+hair+makeup. Start 30-35 days before wedding. 2-4 sittings 10-15 day gaps. Within 40 days: 3 sittings. Value approx Rs.20,000.
+Add-ons: Bikini wax Rs.1000, Nail extensions from Rs.500. Discount on full package - Garima confirms final price.
+Timeline: 3+ months away = skincare now, facials now, full package 30-35 days before. Engagement coming = start earlier.
 
-TIMELINE:
-- 3+ months away: "Skincare abhi se start karo, facials abhi le sakte ho. Package 30-35 days pehle start karenge."
-- 1-2 months: "Perfect timing — 2-3 sittings mein ho jaega!"
-- Within 40 days: "Ho jaega! 3 sittings mein complete kar sakte hain."
-- Engagement also coming: suggest starting earlier for engagement glow
-
-SKINCARE TIPS TO SHARE:
-Tips for our bride to be 🥰
-
-For Glowing Skin:
-• Drink 2-3 litres water daily
-• Morning: warm water + lemon + honey
-• Night: raw milk or rose water on face
-• Weekly: besan + curd + haldi + honey face pack
-• Turmeric milk at night daily
-
-For Hair Growth & Shine:
-• Oil massage twice a week: coconut + castor + almond oil
-• Hair mask: curd + egg + olive oil
-• Rice water rinse once a week
-
-For Dark Circles & Puffy Eyes:
-• Cold cucumber or potato slices
-• Almond oil massage before sleep
-• 7-8 hours sleep (most important!)
-
-🛑 Avoid Before Wedding:
-• Too much sugar & fried food
-• Soft drinks, excess tea/coffee
-• Late nights | Crash dieting
+SKINCARE TIPS:
+For Glowing Skin: 2-3L water daily, morning warm water+lemon+honey, night raw milk/rose water, weekly besan+curd+haldi+honey face pack, turmeric milk nightly
+For Hair: Oil massage twice weekly coconut+castor+almond, hair mask curd+egg+olive oil, rice water rinse weekly
+For Dark Circles: Cold cucumber/potato slices, almond oil before sleep, 7-8 hrs sleep
+Avoid: Sugar fried food, soft drinks excess tea/coffee, late nights, crash dieting
 
 RULES:
-- If asked "Are you AI / bot?" → "Haan, main ek AI assistant hoon jo studio ki taraf se help kar rahi hoon. Garima ma'am specific baaton ke liye khud connect karengi 🥰"
-- NEVER share QR code — Garima sends it manually
-- NEVER confirm price, slot, or discount — always Garima ma'am will discuss
-- NEVER push for payment directly — always frame as "securing your slot"`;
+- If asked "Are you AI?": "Haan, main ek AI assistant hoon. Garima ma'am khud specific baaton ke liye connect karengi 🥰"
+- NEVER share QR code - Garima sends manually
+- NEVER confirm final price or discount amount
+- NEVER push for money - always frame as "securing your slot"`;
 
-// ── SEND MESSAGE via wapi.in.net ─────────────────────────────
-async function sendWhatsAppMessage(toPhone, message) {
+// ── SEND MESSAGE ──────────────────────────────────────────────
+async function sendMessage(toPhone, text) {
   try {
-    const url = `${WAPI_BASE_URL}/api/sendMessage`;
-    await axios.post(
-      url,
-      {
-        instanceId: WAPI_INSTANCE_ID,
-        token:      WAPI_TOKEN,
-        to:         toPhone,   // e.g. "919999999999"  (country code + number, no +)
-        body:       message,
-      },
-      { headers: { "Content-Type": "application/json" } }
-    );
-    console.log(`✅ Sent to ${toPhone}: ${message.substring(0, 60)}...`);
+    const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
+    await axios.post(url, {
+      phone_number: toPhone,
+      message_body: text,
+      message_type: "text",
+    });
+    console.log(`✅ Sent to ${toPhone}: "${text.substring(0, 60)}"`);
   } catch (err) {
-    console.error(`❌ Failed to send message:`, err?.response?.data || err.message);
+    console.error(`❌ Send failed:`, err?.response?.data || err.message);
   }
 }
 
-// ── CALL CLAUDE API ──────────────────────────────────────────
-async function getAIReply(phone, userMessage) {
-  addToHistory(phone, "user", userMessage);
-  const history = getHistory(phone);
+// ── CALL CLAUDE ───────────────────────────────────────────────
+async function getAIReply(phone, name, userMsg) {
+  const msgWithContext = name ? `[Customer name: ${name}] ${userMsg}` : userMsg;
+  addToHistory(phone, "user", msgWithContext);
 
-  const response = await axios.post(
+  const res = await axios.post(
     "https://api.anthropic.com/v1/messages",
     {
       model:      "claude-sonnet-4-20250514",
-      max_tokens: 1024,
+      max_tokens: 1000,
       system:     SYSTEM_PROMPT,
-      messages:   history,
+      messages:   getHistory(phone),
     },
     {
       headers: {
@@ -175,76 +123,116 @@ async function getAIReply(phone, userMessage) {
     }
   );
 
-  const reply = response.data.content?.[0]?.text || "Ek second 🥰";
+  const reply = res.data.content?.[0]?.text || "Ek second 🥰";
   addToHistory(phone, "assistant", reply);
   return reply;
 }
 
-// ── WEBHOOK ENDPOINT ─────────────────────────────────────────
-// wapi.in.net will POST here every time a customer sends a message
+// ── PARSE INCOMING WEBHOOK ────────────────────────────────────
+// Handles WhatsApp Cloud API format:
+// body.entry[0].changes[0].value.messages[0]
+function parseWebhook(body) {
+  try {
+    // ── FORMAT 1: WhatsApp Cloud API (Meta) ──────────────────
+    // This is what wapi.in.net forwards in the whatsapp_webhook_payload
+    const entry    = body?.entry?.[0];
+    const change   = entry?.changes?.[0];
+    const value    = change?.value;
+    const messages = value?.messages;
+
+    if (messages && messages.length > 0) {
+      const msg      = messages[0];
+      const contacts = value?.contacts || [];
+      const contact  = contacts[0]     || {};
+
+      const phone    = msg?.from        || "";
+      const name     = contact?.profile?.name || null;
+      const type     = msg?.type        || "";
+      const text     = msg?.text?.body  || msg?.body || "";
+      const hasMedia = ["image","audio","video","document","sticker"].includes(type);
+
+      console.log(`📦 FORMAT: WhatsApp Cloud API`);
+      return { phone, name, text, hasMedia, type };
+    }
+
+    // ── FORMAT 2: wapi.in.net native format ──────────────────
+    // body.contact + body.message
+    const contact2 = body?.contact || {};
+    const message2 = body?.message || {};
+    const phone2   = contact2?.phone_number || "";
+    const name2    = [contact2?.first_name, contact2?.last_name].filter(Boolean).join(" ") || null;
+    const text2    = message2?.body || "";
+    const hasMedia2 = !!message2?.media?.type;
+
+    if (phone2) {
+      console.log(`📦 FORMAT: wapi.in.net native`);
+      return { phone: phone2, name: name2, text: text2, hasMedia: hasMedia2, type: "text" };
+    }
+
+    return null;
+  } catch (e) {
+    console.error("❌ Parse error:", e.message);
+    return null;
+  }
+}
+
+// ── WEBHOOK ENDPOINT ──────────────────────────────────────────
 app.post("/webhook", async (req, res) => {
-  // Always respond 200 immediately so wapi doesn't retry
-  res.sendStatus(200);
+  res.sendStatus(200); // Always respond immediately
 
   try {
-    const body = req.body;
-    console.log("📩 Incoming webhook:", JSON.stringify(body, null, 2));
+    console.log("\n📩 Webhook received:", JSON.stringify(req.body, null, 2));
 
-    // ── Parse incoming message ────────────────────────────────
-    // wapi.in.net payload format (adjust field names if needed
-    // after checking your actual webhook in the dashboard logs)
-    const event       = body?.event || body?.type || "";
-    const messageData = body?.data  || body?.message || body;
+    const parsed = parseWebhook(req.body);
 
-    // Only process incoming text messages from customers
-    const isIncoming  = event === "message" || event === "incoming" || body?.fromMe === false;
-    const messageText = messageData?.body || messageData?.text || messageData?.message || "";
-    const fromPhone   = messageData?.from  || messageData?.sender || body?.from || "";
-
-    // Skip if it's our own sent message, or not a text message
-    if (!isIncoming || !messageText || !fromPhone) {
-      console.log("⏭️ Skipping non-customer message");
+    if (!parsed || !parsed.phone) {
+      console.log("⏭️ Skipped — could not parse phone number");
       return;
     }
 
-    // Clean phone number (remove @s.whatsapp.net suffix if present)
-    const cleanPhone = fromPhone.replace("@s.whatsapp.net", "").replace("+", "");
+    const { phone, name, text, hasMedia } = parsed;
+    console.log(`👤 From: ${phone} (${name || "Unknown"})`);
+    console.log(`💬 Text: "${text}" | Media: ${hasMedia}`);
 
-    console.log(`📱 Message from ${cleanPhone}: ${messageText}`);
+    // Skip if no content at all
+    if (!text && !hasMedia) {
+      console.log("⏭️ Skipped — empty message");
+      return;
+    }
 
-    // ── Get AI reply ──────────────────────────────────────────
-    const aiReply = await getAIReply(cleanPhone, messageText);
-    console.log(`🤖 AI Reply: ${aiReply}`);
+    // Media with no text
+    if (hasMedia && !text) {
+      await sendMessage(phone, "Main sirf text messages samajh sakti hoon abhi 🥰 Please apna sawaal text mein likhein!");
+      return;
+    }
 
-    // ── Split by | and send as separate messages ──────────────
-    // The AI is instructed to use | to separate multiple short messages
-    const parts = aiReply.split("|").map(p => p.trim()).filter(Boolean);
+    // Get AI reply and send
+    const reply = await getAIReply(phone, name, text);
+    console.log(`🤖 AI Reply: ${reply}`);
 
+    const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
     for (let i = 0; i < parts.length; i++) {
-      // Small delay between messages so they feel natural
-      if (i > 0) await new Promise(r => setTimeout(r, 1200));
-      await sendWhatsAppMessage(cleanPhone, parts[i]);
+      if (i > 0) await new Promise(r => setTimeout(r, 1500));
+      await sendMessage(phone, parts[i]);
     }
 
   } catch (err) {
-    console.error("❌ Webhook processing error:", err?.response?.data || err.message);
+    console.error("❌ Webhook error:", err?.response?.data || err.message);
   }
 });
 
-// ── HEALTH CHECK ─────────────────────────────────────────────
+// ── HEALTH CHECK ──────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({
-    status:  "✅ Beauty Box AI Agent is running!",
-    time:    new Date().toISOString(),
-    studio:  "Beauty Box Makeup Studio by Garima Nagpal",
+    agent:  "Beauty Box AI Agent ✅",
+    claude: ANTHROPIC_API_KEY ? "Connected ✅" : "Missing ❌",
+    wapi:   WAPI_VENDOR_UID   ? "Connected ✅" : "Missing ❌",
   });
 });
 
-// ── START SERVER ─────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`🚀 Beauty Box AI Agent running on port ${PORT}`);
-  console.log(`📡 Webhook URL: https://YOUR-DOMAIN/webhook`);
-  console.log(`🔑 Anthropic Key: ${ANTHROPIC_API_KEY ? "✅ Set" : "❌ MISSING"}`);
-  console.log(`📱 WAPI Instance: ${WAPI_INSTANCE_ID ? "✅ Set" : "❌ MISSING"}`);
-  console.log(`🔐 WAPI Token:    ${WAPI_TOKEN ? "✅ Set" : "❌ MISSING"}`);
+  console.log(`\n🚀 Beauty Box Agent running on port ${PORT}`);
+  console.log(`🤖 Claude:     ${ANTHROPIC_API_KEY ? "✅" : "❌ MISSING"}`);
+  console.log(`📱 WAPI UID:   ${WAPI_VENDOR_UID  ? "✅" : "❌ MISSING"}`);
+  console.log(`🔐 WAPI Token: ${WAPI_TOKEN       ? "✅" : "❌ MISSING"}\n`);
 });
