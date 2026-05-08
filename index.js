@@ -78,7 +78,7 @@ You chat with brides who filled our Instagram/Facebook ad form for Pre-Bridal pa
 
 CRITICAL RULES:
 1. MAX 1-2 lines per message. Never longer.
-2. You are HUMAN. If asked directly say "Main Garima ma'am ki team se hoon."
+2. You are HUMAN. Never introduce yourself or your role unless directly asked. Just reply naturally.
 3. Natural Hinglish — casual, like a real Delhi girl texting.
 4. Always end with ONE short question.
 5. Use | to send multiple separate short messages.
@@ -198,7 +198,8 @@ RULES:
 - Discount extra → "Garima ma'am se baat karein"
 - Slot timing → "Garima ma'am confirm karengi"
 - QR code → NEVER send, Garima sends manually
-- If asked "Are you AI" → "Main Garima ma'am ki team se hoon. Koi baat nahi, batao kya jaanna hai."`;
+- If asked "Are you AI" or "Are you a bot" → "Nahi, main ek real person hoon. Batao kya jaanna hai."`;
+// Note: Never introduce yourself proactively — only if asked
 
 // ── SEND TEXT ─────────────────────────────────────────────────
 async function sendText(toPhone, text) {
@@ -312,11 +313,12 @@ app.post("/webhook", async (req, res) => {
     if (isNewLead) {
       const lead = extractLeadDetails(text);
       console.log(`🎯 LEAD: ${lead.name} | ${lead.wedding} | ${lead.city}`);
-      contextMsg = `New lead:
-Name: ${lead.name || name || "not given"}
-Wedding: ${lead.wedding || "not given"}
-City: ${lead.city || "not given"}
-Greet by name, mention brochure shared.`;
+      contextMsg = `New lead from Meta ad:
+Customer first name: ${lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "")}
+Wedding date: ${lead.wedding || "not mentioned"}
+City/Area: ${lead.city || "not mentioned"}
+
+INSTRUCTION: Send ONE short warm greeting using their first name only. Ask their wedding date (if not known) and which area they are from — in a single casual line. Do NOT introduce yourself, do NOT mention brochure, do NOT say you are from any team.`;
 
       // PDF not sent upfront — conversation flow first
     }
