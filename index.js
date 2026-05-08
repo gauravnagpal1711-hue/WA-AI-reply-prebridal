@@ -102,17 +102,17 @@ CONVERSATION FLOW:
 4. Move to Path A or Path B
 
 PATH A (she seems ready/interested):
-"Ek small advance se slot pakka ho jaata hai 🥰 Kya abhi confirm karogi?"
-If YES → "Perfect! Garima ma'am aapko abhi QR share karengi 🥰"
+"Ek small advance se slot pakka ho jaata hai. Kya abhi confirm karogi?"
+If YES → "Perfect! Garima ma'am aapko abhi QR share karengi."
 
 PATH B (hesitant/questions):
-"Ek baar studio aao — Garima ma'am personally skin check karengi, koi pressure nahi 🥰|Kab aa sakti ho?"
-If agrees → "Bahut accha! Garima ma'am se timing confirm ho jaegi 🥰"
+"Ek baar studio aao — Garima ma'am personally skin check karengi, koi pressure nahi.|Kab aa sakti ho?"
+If agrees → "Bahut accha! Garima ma'am se timing confirm ho jaegi."
 
 DISTANCE:
-Step 1: "Metro se [X] min hi hai, aur sirf 2-3 visits chahiye 🥰"
-Step 2: "Rs.16,800 ki services sirf Rs.7,499 mein — 71% off! Itna deal kahin nahi 🥰"
-Step 3 (still no): "No worries! Nearby salons bhi dekh sakti ho 🥰 Best of luck!"
+Step 1: "Metro se [X] min hi hai, aur sirf 2-3 visits chahiye."
+Step 2: "Rs.16,800 ki services sirf Rs.7,499 mein — 71% off! Itna deal kahin nahi milega."
+Step 3 (still no): "No worries! Nearby salons bhi dekh sakti ho. Best of luck for your wedding!"
 
 METRO TIMES:
 - Dwarka: 15 min Pink Line
@@ -133,9 +133,10 @@ QUICK TIPS (share max 2, very short):
 
 RULES:
 - Price asked → Rs.7,499 confidently, explain 71% off
-- Extra discount → "Garima ma'am se baat karein 🥰"
-- Slot timing → "Garima ma'am confirm karengi 🥰"
-- QR code → NEVER send, Garima sends manually`;
+- Extra discount → "Garima ma'am se baat karein"
+- Slot timing → "Garima ma'am confirm karengi"
+- QR code → NEVER send, Garima sends manually
+- Use 🥰 emoji only once every 2-3 messages maximum. Most messages should have NO emoji.`;
 
 // ── SEND TEXT ─────────────────────────────────────────────────
 async function sendText(toPhone, text) {
@@ -152,74 +153,18 @@ async function sendText(toPhone, text) {
   }
 }
 
-// ── SEND PDF AS ATTACHMENT ────────────────────────────────────
+// ── SEND PDF AS SHORT LINK ───────────────────────────────────
 async function sendPDF(toPhone) {
   const pdfUrl = "https://raw.githubusercontent.com/gauravnagpal1711-hue/WA-AI-reply-prebridal/main/Brochure.pdf";
-  const apiUrl = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
-  console.log(`📄 Sending PDF to ${toPhone}`);
-
-  // Step 1: Download PDF and convert to base64
   try {
-    console.log(`📥 Downloading PDF for base64...`);
-    const pdfResp = await axios.get(pdfUrl, { responseType: "arraybuffer" });
-    const base64  = Buffer.from(pdfResp.data).toString("base64");
-    console.log(`📦 PDF size: ${pdfResp.data.byteLength} bytes`);
-
-    // Try base64 Format 1: document_base64
-    try {
-      const res = await axios.post(apiUrl, {
-        phone_number:    toPhone,
-        message_type:    "document",
-        message_body:    PDF_NAME,
-        document_base64: base64,
-        document_name:   PDF_NAME,
-        mimetype:        "application/pdf",
-      });
-      console.log(`✅ Base64 F1:`, JSON.stringify(res.data));
-      if (res.data?.result === "success" && !res.data?.message?.includes("processed")) return;
-    } catch (e) {
-      console.log(`❌ Base64 F1:`, JSON.stringify(e?.response?.data || e.message));
-    }
-
-    // Try base64 Format 2: media_data
-    try {
-      const res = await axios.post(apiUrl, {
-        phone_number: toPhone,
-        message_type: "document",
-        message_body: PDF_NAME,
-        media_data:   base64,
-        filename:     PDF_NAME,
-        mimetype:     "application/pdf",
-      });
-      console.log(`✅ Base64 F2:`, JSON.stringify(res.data));
-      if (res.data?.result === "success" && !res.data?.message?.includes("processed")) return;
-    } catch (e) {
-      console.log(`❌ Base64 F2:`, JSON.stringify(e?.response?.data || e.message));
-    }
-
-    // Try base64 Format 3: file_data
-    try {
-      const res = await axios.post(apiUrl, {
-        phone_number: toPhone,
-        message_type: "document",
-        message_body: PDF_NAME,
-        file_data:    base64,
-        file_name:    PDF_NAME,
-        mime_type:    "application/pdf",
-      });
-      console.log(`✅ Base64 F3:`, JSON.stringify(res.data));
-      if (res.data?.result === "success" && !res.data?.message?.includes("processed")) return;
-    } catch (e) {
-      console.log(`❌ Base64 F3:`, JSON.stringify(e?.response?.data || e.message));
-    }
-
-  } catch (downloadErr) {
-    console.log(`❌ PDF download failed:`, downloadErr.message);
+    const res  = await axios.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(pdfUrl)}`);
+    const link = res.data?.trim() || pdfUrl;
+    await sendText(toPhone, `Please download complete Pre-Bridal Package details in brochure, Link: ${link}`);
+    console.log(`✅ PDF link sent: ${link}`);
+  } catch (err) {
+    await sendText(toPhone, `Please download complete Pre-Bridal Package details in brochure, Link: ${pdfUrl}`);
+    console.log(`⚠️ TinyURL failed, sent raw link`);
   }
-
-  // Final conclusion
-  console.log(`⚠️ wapi.in.net does not support PDF attachment via API — PDF feature not available`);
-  console.log(`💡 To send PDF: Use wapi.in.net chat inbox manually for each lead`);
 }
 
 // ── CALL CLAUDE ───────────────────────────────────────────────
