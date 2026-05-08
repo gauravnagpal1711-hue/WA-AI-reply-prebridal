@@ -154,85 +154,72 @@ async function sendText(toPhone, text) {
 
 // ── SEND PDF AS ATTACHMENT ────────────────────────────────────
 async function sendPDF(toPhone) {
-  const pdfUrl   = "https://raw.githubusercontent.com/gauravnagpal1711-hue/WA-AI-reply-prebridal/main/Brochure.pdf";
-  const base     = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}`;
-  const token    = `token=${WAPI_TOKEN}`;
-  console.log(`📄 Sending PDF to ${toPhone} | ${pdfUrl}`);
+  const pdfUrl = "https://raw.githubusercontent.com/gauravnagpal1711-hue/WA-AI-reply-prebridal/main/Brochure.pdf";
+  const apiUrl = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
+  console.log(`📄 Sending PDF to ${toPhone}`);
 
-  // ── ENDPOINT 1: send-file ─────────────────────────────────
+  // Step 1: Download PDF and convert to base64
   try {
-    const res = await axios.post(`${base}/contact/send-file?${token}`, {
-      phone_number:  toPhone,
-      file_url:      pdfUrl,
-      file_name:     PDF_NAME,
-      message_body:  " ",
-    });
-    console.log(`✅ EP1 send-file:`, JSON.stringify(res.data));
-    if (res.data?.result === "success") return;
-  } catch (err) {
-    console.log(`❌ EP1 failed:`, JSON.stringify(err?.response?.data || err.message));
+    console.log(`📥 Downloading PDF for base64...`);
+    const pdfResp = await axios.get(pdfUrl, { responseType: "arraybuffer" });
+    const base64  = Buffer.from(pdfResp.data).toString("base64");
+    console.log(`📦 PDF size: ${pdfResp.data.byteLength} bytes`);
+
+    // Try base64 Format 1: document_base64
+    try {
+      const res = await axios.post(apiUrl, {
+        phone_number:    toPhone,
+        message_type:    "document",
+        message_body:    PDF_NAME,
+        document_base64: base64,
+        document_name:   PDF_NAME,
+        mimetype:        "application/pdf",
+      });
+      console.log(`✅ Base64 F1:`, JSON.stringify(res.data));
+      if (res.data?.result === "success" && !res.data?.message?.includes("processed")) return;
+    } catch (e) {
+      console.log(`❌ Base64 F1:`, JSON.stringify(e?.response?.data || e.message));
+    }
+
+    // Try base64 Format 2: media_data
+    try {
+      const res = await axios.post(apiUrl, {
+        phone_number: toPhone,
+        message_type: "document",
+        message_body: PDF_NAME,
+        media_data:   base64,
+        filename:     PDF_NAME,
+        mimetype:     "application/pdf",
+      });
+      console.log(`✅ Base64 F2:`, JSON.stringify(res.data));
+      if (res.data?.result === "success" && !res.data?.message?.includes("processed")) return;
+    } catch (e) {
+      console.log(`❌ Base64 F2:`, JSON.stringify(e?.response?.data || e.message));
+    }
+
+    // Try base64 Format 3: file_data
+    try {
+      const res = await axios.post(apiUrl, {
+        phone_number: toPhone,
+        message_type: "document",
+        message_body: PDF_NAME,
+        file_data:    base64,
+        file_name:    PDF_NAME,
+        mime_type:    "application/pdf",
+      });
+      console.log(`✅ Base64 F3:`, JSON.stringify(res.data));
+      if (res.data?.result === "success" && !res.data?.message?.includes("processed")) return;
+    } catch (e) {
+      console.log(`❌ Base64 F3:`, JSON.stringify(e?.response?.data || e.message));
+    }
+
+  } catch (downloadErr) {
+    console.log(`❌ PDF download failed:`, downloadErr.message);
   }
 
-  // ── ENDPOINT 2: send-media ────────────────────────────────
-  try {
-    const res = await axios.post(`${base}/contact/send-media?${token}`, {
-      phone_number: toPhone,
-      media_url:    pdfUrl,
-      filename:     PDF_NAME,
-      message_body: " ",
-      media_type:   "document",
-    });
-    console.log(`✅ EP2 send-media:`, JSON.stringify(res.data));
-    if (res.data?.result === "success") return;
-  } catch (err) {
-    console.log(`❌ EP2 failed:`, JSON.stringify(err?.response?.data || err.message));
-  }
-
-  // ── ENDPOINT 3: send-document ─────────────────────────────
-  try {
-    const res = await axios.post(`${base}/contact/send-document?${token}`, {
-      phone_number:  toPhone,
-      document_url:  pdfUrl,
-      document_name: PDF_NAME,
-      message_body:  " ",
-    });
-    console.log(`✅ EP3 send-document:`, JSON.stringify(res.data));
-    if (res.data?.result === "success") return;
-  } catch (err) {
-    console.log(`❌ EP3 failed:`, JSON.stringify(err?.response?.data || err.message));
-  }
-
-  // ── ENDPOINT 4: send-message with "document" as field ─────
-  try {
-    const res = await axios.post(`${base}/contact/send-message?${token}`, {
-      phone_number:  toPhone,
-      message_type:  "document",
-      message_body:  " ",
-      document:      pdfUrl,
-      document_name: PDF_NAME,
-    });
-    console.log(`✅ EP4 document field:`, JSON.stringify(res.data));
-    if (res.data?.result === "success") return;
-  } catch (err) {
-    console.log(`❌ EP4 failed:`, JSON.stringify(err?.response?.data || err.message));
-  }
-
-  // ── ENDPOINT 5: send-message with media_url ───────────────
-  try {
-    const res = await axios.post(`${base}/contact/send-message?${token}`, {
-      phone_number: toPhone,
-      message_type: "document",
-      message_body: " ",
-      media_url:    pdfUrl,
-      file_name:    PDF_NAME,
-    });
-    console.log(`✅ EP5 media_url:`, JSON.stringify(res.data));
-    if (res.data?.result === "success") return;
-  } catch (err) {
-    console.log(`❌ EP5 failed:`, JSON.stringify(err?.response?.data || err.message));
-  }
-
-  console.log(`⚠️ All PDF endpoints failed — check Railway logs and share screenshot`);
+  // Final conclusion
+  console.log(`⚠️ wapi.in.net does not support PDF attachment via API — PDF feature not available`);
+  console.log(`💡 To send PDF: Use wapi.in.net chat inbox manually for each lead`);
 }
 
 // ── CALL CLAUDE ───────────────────────────────────────────────
