@@ -41,12 +41,21 @@ function isMetaLead(text) {
 // ── EXTRACT LEAD DETAILS ──────────────────────────────────────
 function extractLeadDetails(text) {
   const d = {};
-  for (const line of text.split("\n").map(l => l.trim())) {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
     const low = line.toLowerCase();
-    if (low.startsWith("full_name:"))                 d.name    = line.split(":")[1]?.trim();
-    if (low.startsWith("when_is_your_wedding_date:")) d.wedding = line.split(":").slice(1).join(":").trim();
-    if (low.startsWith("city/area:") || low.startsWith("city:")) d.city = line.split(":")[1]?.trim();
+    // Handle both "key: value" and "key:value" formats
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+    const key = low.substring(0, colonIdx).trim();
+    const val = line.substring(colonIdx + 1).trim();
+
+    if (key === "full_name" || key === "name")                          d.name    = val;
+    if (key === "when_is_your_wedding_date" || key === "wedding_date")  d.wedding = val;
+    if (key === "city/area" || key === "city" || key === "area")        d.city    = val;
+    if (key === "phone_number")                                          d.leadPhone = val;
   }
+  console.log(`🎯 Extracted lead:`, JSON.stringify(d));
   return d;
 }
 
@@ -145,78 +154,85 @@ async function sendText(toPhone, text) {
 
 // ── SEND PDF AS ATTACHMENT ────────────────────────────────────
 async function sendPDF(toPhone) {
-  const pdfUrl = getPdfUrl();
-  if (!pdfUrl) {
-    console.log("⚠️ APP_URL not set — cannot send PDF");
-    return;
-  }
+  const pdfUrl   = "https://raw.githubusercontent.com/gauravnagpal1711-hue/WA-AI-reply-prebridal/main/Brochure.pdf";
+  const base     = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}`;
+  const token    = `token=${WAPI_TOKEN}`;
+  console.log(`📄 Sending PDF to ${toPhone} | ${pdfUrl}`);
 
-  const apiUrl = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
-  console.log(`📄 Trying to send PDF to ${toPhone}`);
-  console.log(`📄 PDF URL: ${pdfUrl}`);
-
-  // Try Format 1 — message_type + document_url
+  // ── ENDPOINT 1: send-file ─────────────────────────────────
   try {
-    const res = await axios.post(apiUrl, {
+    const res = await axios.post(`${base}/contact/send-file?${token}`, {
       phone_number:  toPhone,
-      message_type:  "document",
-      message_body:  PDF_NAME,
-      document_url:  pdfUrl,
-      document_name: PDF_NAME,
+      file_url:      pdfUrl,
+      file_name:     PDF_NAME,
+      message_body:  " ",
     });
-    console.log(`✅ PDF sent (Format 1):`, res.data);
-    return;
+    console.log(`✅ EP1 send-file:`, JSON.stringify(res.data));
+    if (res.data?.result === "success") return;
   } catch (err) {
-    console.log(`❌ Format 1 failed:`, err?.response?.data || err.message);
+    console.log(`❌ EP1 failed:`, JSON.stringify(err?.response?.data || err.message));
   }
 
-  // Try Format 2 — type + url + filename
+  // ── ENDPOINT 2: send-media ────────────────────────────────
   try {
-    const res = await axios.post(apiUrl, {
+    const res = await axios.post(`${base}/contact/send-media?${token}`, {
       phone_number: toPhone,
-      message_type: "document",
-      message_body: PDF_NAME,
-      url:          pdfUrl,
-      filename:     PDF_NAME,
-    });
-    console.log(`✅ PDF sent (Format 2):`, res.data);
-    return;
-  } catch (err) {
-    console.log(`❌ Format 2 failed:`, err?.response?.data || err.message);
-  }
-
-  // Try Format 3 — media object nested
-  try {
-    const res = await axios.post(apiUrl, {
-      phone_number: toPhone,
-      message_type: "document",
-      message_body: PDF_NAME,
       media_url:    pdfUrl,
       filename:     PDF_NAME,
+      message_body: " ",
+      media_type:   "document",
     });
-    console.log(`✅ PDF sent (Format 3):`, res.data);
-    return;
+    console.log(`✅ EP2 send-media:`, JSON.stringify(res.data));
+    if (res.data?.result === "success") return;
   } catch (err) {
-    console.log(`❌ Format 3 failed:`, err?.response?.data || err.message);
+    console.log(`❌ EP2 failed:`, JSON.stringify(err?.response?.data || err.message));
   }
 
-  // Try Format 4 — document object nested
+  // ── ENDPOINT 3: send-document ─────────────────────────────
   try {
-    const res = await axios.post(apiUrl, {
+    const res = await axios.post(`${base}/contact/send-document?${token}`, {
+      phone_number:  toPhone,
+      document_url:  pdfUrl,
+      document_name: PDF_NAME,
+      message_body:  " ",
+    });
+    console.log(`✅ EP3 send-document:`, JSON.stringify(res.data));
+    if (res.data?.result === "success") return;
+  } catch (err) {
+    console.log(`❌ EP3 failed:`, JSON.stringify(err?.response?.data || err.message));
+  }
+
+  // ── ENDPOINT 4: send-message with "document" as field ─────
+  try {
+    const res = await axios.post(`${base}/contact/send-message?${token}`, {
+      phone_number:  toPhone,
+      message_type:  "document",
+      message_body:  " ",
+      document:      pdfUrl,
+      document_name: PDF_NAME,
+    });
+    console.log(`✅ EP4 document field:`, JSON.stringify(res.data));
+    if (res.data?.result === "success") return;
+  } catch (err) {
+    console.log(`❌ EP4 failed:`, JSON.stringify(err?.response?.data || err.message));
+  }
+
+  // ── ENDPOINT 5: send-message with media_url ───────────────
+  try {
+    const res = await axios.post(`${base}/contact/send-message?${token}`, {
       phone_number: toPhone,
       message_type: "document",
-      message_body: PDF_NAME,
-      media:        pdfUrl,
-      filename:     PDF_NAME,
+      message_body: " ",
+      media_url:    pdfUrl,
+      file_name:    PDF_NAME,
     });
-    console.log(`✅ PDF sent (Format 4):`, res.data);
-    return;
+    console.log(`✅ EP5 media_url:`, JSON.stringify(res.data));
+    if (res.data?.result === "success") return;
   } catch (err) {
-    console.log(`❌ Format 4 failed:`, err?.response?.data || err.message);
-    // All formats failed — log and send as link
-    console.log(`⚠️ All PDF formats failed. Check Railway logs for correct format.`);
-    await sendText(toPhone, `Hamare package ki poori details yahan hai 🥰\n${pdfUrl}`);
+    console.log(`❌ EP5 failed:`, JSON.stringify(err?.response?.data || err.message));
   }
+
+  console.log(`⚠️ All PDF endpoints failed — check Railway logs and share screenshot`);
 }
 
 // ── CALL CLAUDE ───────────────────────────────────────────────
@@ -281,7 +297,9 @@ app.post("/webhook", async (req, res) => {
     const { phone, name, text, hasMedia } = parsed;
     console.log(`📩 ${phone} | "${text.substring(0,80)}"`);
 
-    if (!text && !hasMedia) return;
+    // Skip empty messages and delivery receipts
+    if (!text && !hasMedia) { console.log("⏭️ Empty message skipped"); return; }
+    if (text && text.trim() === "") { console.log("⏭️ Blank text skipped"); return; }
 
     const isNewLead  = isMetaLead(text);
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
