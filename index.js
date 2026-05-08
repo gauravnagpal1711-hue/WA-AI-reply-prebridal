@@ -60,7 +60,8 @@ function extractLeadDetails(text) {
 }
 
 // ── CONVERSATION MEMORY ───────────────────────────────────────
-const conversations = new Map();
+const conversations    = new Map();
+const lastSentMessage  = new Map(); // Fix 3: track last sent per phone for dedup
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
   return conversations.get(phone);
@@ -193,12 +194,16 @@ For hair: Hafte mein 2 baar coconut+castor oil massage karo
 For dark circles: Raat ko almond oil aankho ke neeche lagao
 
 RULES:
-- Price asked directly → share price table above
-- Services asked → share full services list above
+- Price asked → share price table
+- Services asked → share full services list
 - Discount extra → "Garima ma'am se baat karein"
 - Slot timing → "Garima ma'am confirm karengi"
 - QR code → NEVER send, Garima sends manually
-- If asked "Are you AI" or "Are you a bot" → "Nahi, main ek real person hoon. Batao kya jaanna hai."`;
+- If asked "Are you AI" → "Nahi, main ek real person hoon. Batao kya jaanna hai."
+- If you do not understand a message → Do NOT say you don't understand. Just move forward naturally with the next relevant question.
+- If wedding is 2+ months away → Don't push for booking. Say: "Abhi time hai, soch ke batao. Aap kab free hongi baat karne ke liye?"
+- If someone asks about bridal makeup looks → "Garima ma'am ka kaam yahan dekho: https://www.instagram.com/garimanagpalmua/"
+- If someone asks about combined package (bridal makeup + pre-bridal together) → "Bilkul ho sakta hai! Aapko Garima ma'am se directly baat karni chahiye. Kaunsa time suit karta hai call ke liye?"`;
 // Note: Never introduce yourself proactively — only if asked
 
 // ── SEND TEXT ─────────────────────────────────────────────────
@@ -322,10 +327,24 @@ INSTRUCTION: Greet them warmly${firstName ? " as " + firstName : ""}. Ask their 
     }
 
     const reply = await getAIReply(phone, contextMsg);
-    const parts  = reply.split("|").map(p => p.trim()).filter(Boolean);
+
+    // Fix 2: Max 3 messages at a time
+    const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
+
+    // Fix 1: 5-6 second human-like delay before first reply
+    await new Promise(r => setTimeout(r, 5500));
+
+    // Fix 3: Dedup — don't send same message twice in a row
+    const lastSent = lastSentMessage.get(phone) || "";
     for (let i = 0; i < parts.length; i++) {
-      if (i > 0) await new Promise(r => setTimeout(r, 1200));
-      await sendText(phone, parts[i]);
+      const msg = parts[i];
+      if (msg === lastSent && i === 0) {
+        console.log(`⏭️ Duplicate message skipped: "${msg.substring(0,40)}"`);
+        continue;
+      }
+      if (i > 0) await new Promise(r => setTimeout(r, 1800));
+      await sendText(phone, msg);
+      lastSentMessage.set(phone, msg);
     }
   } catch (err) {
     console.error("❌", err?.response?.data || err.message);
