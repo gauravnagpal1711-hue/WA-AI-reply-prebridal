@@ -299,28 +299,26 @@ app.post("/webhook", async (req, res) => {
     const isNewLead  = isMetaLead(text);
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
 
-    if (!isNewLead && !hasHistory) {
-      console.log(`⏭️ Ignored — not a lead: ${phone}`);
-      return;
-    }
-
-    if (hasMedia && !text) {
-      await sendText(phone, "Text mein likhein please 🥰");
-      return;
-    }
-
+    // Respond to ALL real customer messages — Meta leads, existing chats, outreach replies
     let contextMsg = text;
+
     if (isNewLead) {
       const lead = extractLeadDetails(text);
-      console.log(`🎯 LEAD: ${lead.name} | ${lead.wedding} | ${lead.city}`);
+      console.log(`🎯 META LEAD: ${lead.name} | ${lead.wedding} | ${lead.city}`);
       contextMsg = `New lead from Meta ad:
 Customer first name: ${lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "")}
 Wedding date: ${lead.wedding || "not mentioned"}
 City/Area: ${lead.city || "not mentioned"}
 
-INSTRUCTION: Send ONE short warm greeting using their first name only. Ask their wedding date (if not known) and which area they are from — in a single casual line. Do NOT introduce yourself, do NOT mention brochure, do NOT say you are from any team.`;
+INSTRUCTION: Send ONE short warm greeting using their first name only. Ask wedding date and area in one casual line. Do NOT introduce yourself or mention brochure.`;
 
-      // PDF not sent upfront — conversation flow first
+    } else if (!hasHistory) {
+      const firstName = name ? name.split(" ")[0] : "";
+      console.log(`📤 OUTREACH REPLY: ${phone} (${firstName}): "${text}"`);
+      contextMsg = `Customer replied to our outreach: "${text}"
+Their name: ${firstName || "unknown"}
+
+INSTRUCTION: Greet them warmly${firstName ? " as " + firstName : ""}. Ask their wedding date and city in ONE short casual line. Do NOT introduce yourself or mention brochure.`;
     }
 
     const reply = await getAIReply(phone, contextMsg);
