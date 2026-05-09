@@ -33,14 +33,11 @@ function getPdfUrl() {
 }
 
 // ── META LEAD TRIGGER ─────────────────────────────────────────
-const META_TRIGGER   = "i filled in your form and would like to know more about your business";
-const MANUAL_TRIGGER = "#start"; // Secret keyword — type this in wapi.in.net inbox to activate bot for any lead
+const META_TRIGGER = "i filled in your form and would like to know more about your business";
+const ADMIN_KEY    = process.env.ADMIN_KEY || "beautybox2024"; // Set this in Railway Variables
 
 function isMetaLead(text) {
   return text.toLowerCase().includes(META_TRIGGER);
-}
-function isManualTrigger(text) {
-  return text.trim().toLowerCase() === MANUAL_TRIGGER;
 }
 
 // ── EXTRACT LEAD DETAILS ──────────────────────────────────────
@@ -309,25 +306,9 @@ app.post("/webhook", async (req, res) => {
     const isNewLead  = isMetaLead(text);
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
 
-    const isManual = isManualTrigger(text);
-
-    // Only respond to: (1) Meta lead form, (2) existing conversations, (3) manual #start trigger
-    if (!isNewLead && !hasHistory && !isManual) {
+    // Only respond to: (1) Meta lead form, (2) existing conversations
+    if (!isNewLead && !hasHistory) {
       console.log(`⏭️ Ignored — not a lead: ${phone}`);
-      return;
-    }
-
-    // If you typed #start — don't reply to yourself, send opening to customer instead
-    if (isManual) {
-      console.log(`🚀 MANUAL TRIGGER by studio for: ${phone}`);
-      const firstName = name ? name.split(" ")[0] : "";
-      const openingMsg = firstName
-        ? `Hi ${firstName}! Shaadi kab hai aur kahan se ho?`
-        : `Hi! Shaadi kab hai aur kahan se ho?`;
-      await new Promise(r => setTimeout(r, 2000));
-      await sendText(phone, openingMsg);
-      // Seed conversation history so bot continues naturally
-      addToHistory(phone, "assistant", openingMsg);
       return;
     }
 
@@ -369,13 +350,99 @@ INSTRUCTION: Send ONE short warm greeting using their first name only. Ask weddi
   }
 });
 
+// ── ADMIN PANEL ──────────────────────────────────────────────
+app.get("/admin", (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beauty Box — Start Bot</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}
+    body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}
+    .card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 4px 20px rgba(0,0,0,0.08)}
+    .logo{font-size:20px;font-weight:600;color:#111;margin-bottom:4px}
+    .sub{font-size:13px;color:#888;margin-bottom:24px}
+    label{font-size:13px;color:#555;display:block;margin-bottom:6px;margin-top:12px}
+    input{width:100%;padding:12px 14px;border:1px solid #ddd;border-radius:10px;font-size:15px;outline:none}
+    input:focus{border-color:#128C7E}
+    button{width:100%;padding:13px;background:#128C7E;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:500;cursor:pointer;margin-top:20px}
+    button:hover{background:#0e7a6e}
+    .msg{margin-top:16px;padding:12px;border-radius:10px;font-size:14px;text-align:center;display:none}
+    .success{background:#e8f5e9;color:#2e7d32}
+    .error{background:#fdecea;color:#c62828}
+    .note{font-size:12px;color:#aaa;text-align:center;margin-top:14px;line-height:1.5}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">Beauty Box Makeup Studio</div>
+    <div class="sub">Start bot conversation with a lead</div>
+    <label>Phone number (with country code, no +)</label>
+    <input type="tel" id="phone" placeholder="919999999999" />
+    <label>Customer name (optional)</label>
+    <input type="text" id="cname" placeholder="Priya" />
+    <label>Admin key</label>
+    <input type="password" id="key" placeholder="Enter admin key" />
+    <button onclick="startBot()">Start Bot Conversation</button>
+    <div class="msg" id="msg"></div>
+    <div class="note">Opening message goes directly to customer. Nothing visible from your number.</div>
+  </div>
+  <script>
+    async function startBot() {
+      const phone = document.getElementById('phone').value.trim();
+      const cname = document.getElementById('cname').value.trim();
+      const key   = document.getElementById('key').value.trim();
+      const msg   = document.getElementById('msg');
+      if (!phone || !key) { show('Please enter phone number and admin key', 'error'); return; }
+      try {
+        const res  = await fetch('/admin/start', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone,name:cname,key}) });
+        const data = await res.json();
+        if (data.success) {
+          show('Bot started! Opening message sent to ' + phone, 'success');
+          document.getElementById('phone').value='';
+          document.getElementById('cname').value='';
+        } else { show(data.error || 'Something went wrong', 'error'); }
+      } catch(e) { show('Network error — try again', 'error'); }
+    }
+    function show(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text; el.className = 'msg ' + type; el.style.display = 'block';
+    }
+    document.getElementById('key').addEventListener('keydown', e => { if(e.key==='Enter') startBot(); });
+  </script>
+</body>
+</html>`);
+});
+
+app.post("/admin/start", async (req, res) => {
+  const { phone, name, key } = req.body;
+  if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
+  if (!phone)            return res.json({ success: false, error: "Phone number required" });
+  try {
+    const firstName  = name ? name.trim().split(" ")[0] : "";
+    const openingMsg = firstName
+      ? `Hi ${firstName}! Shaadi kab hai aur kahan se ho?`
+      : `Hi! Shaadi kab hai aur kahan se ho?`;
+    await new Promise(r => setTimeout(r, 1000));
+    await sendText(phone, openingMsg);
+    addToHistory(phone, "assistant", openingMsg);
+    console.log(`🚀 ADMIN: Bot started for ${phone} (${firstName || "unknown"})`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Admin error:", err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // ── HEALTH CHECK ──────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({
-    agent:  "Beauty Box AI Agent v5 ✅",
-    pdfUrl: getPdfUrl() || "⚠️ Set RAILWAY_PUBLIC_DOMAIN or APP_URL",
-    claude: ANTHROPIC_API_KEY ? "✅" : "❌",
-    wapi:   WAPI_VENDOR_UID   ? "✅" : "❌",
+    agent:  "Beauty Box AI Agent ✅",
+    claude: ANTHROPIC_API_KEY ? "Connected ✅" : "Missing ❌",
+    wapi:   WAPI_VENDOR_UID   ? "Connected ✅" : "Missing ❌",
+    admin:  "Visit /admin to start bot for any lead",
   });
 });
 
