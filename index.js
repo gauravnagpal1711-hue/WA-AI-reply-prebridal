@@ -33,9 +33,14 @@ function getPdfUrl() {
 }
 
 // ── META LEAD TRIGGER ─────────────────────────────────────────
-const META_TRIGGER = "i filled in your form and would like to know more about your business";
+const META_TRIGGER   = "i filled in your form and would like to know more about your business";
+const MANUAL_TRIGGER = "#start"; // Secret keyword — type this in wapi.in.net inbox to activate bot for any lead
+
 function isMetaLead(text) {
   return text.toLowerCase().includes(META_TRIGGER);
+}
+function isManualTrigger(text) {
+  return text.trim().toLowerCase() === MANUAL_TRIGGER;
 }
 
 // ── EXTRACT LEAD DETAILS ──────────────────────────────────────
@@ -304,7 +309,28 @@ app.post("/webhook", async (req, res) => {
     const isNewLead  = isMetaLead(text);
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
 
-    // Respond to ALL real customer messages — Meta leads, existing chats, outreach replies
+    const isManual = isManualTrigger(text);
+
+    // Only respond to: (1) Meta lead form, (2) existing conversations, (3) manual #start trigger
+    if (!isNewLead && !hasHistory && !isManual) {
+      console.log(`⏭️ Ignored — not a lead: ${phone}`);
+      return;
+    }
+
+    // If you typed #start — don't reply to yourself, send opening to customer instead
+    if (isManual) {
+      console.log(`🚀 MANUAL TRIGGER by studio for: ${phone}`);
+      const firstName = name ? name.split(" ")[0] : "";
+      const openingMsg = firstName
+        ? `Hi ${firstName}! Shaadi kab hai aur kahan se ho?`
+        : `Hi! Shaadi kab hai aur kahan se ho?`;
+      await new Promise(r => setTimeout(r, 2000));
+      await sendText(phone, openingMsg);
+      // Seed conversation history so bot continues naturally
+      addToHistory(phone, "assistant", openingMsg);
+      return;
+    }
+
     let contextMsg = text;
 
     if (isNewLead) {
@@ -316,14 +342,6 @@ Wedding date: ${lead.wedding || "not mentioned"}
 City/Area: ${lead.city || "not mentioned"}
 
 INSTRUCTION: Send ONE short warm greeting using their first name only. Ask wedding date and area in one casual line. Do NOT introduce yourself or mention brochure.`;
-
-    } else if (!hasHistory) {
-      const firstName = name ? name.split(" ")[0] : "";
-      console.log(`📤 OUTREACH REPLY: ${phone} (${firstName}): "${text}"`);
-      contextMsg = `Customer replied to our outreach: "${text}"
-Their name: ${firstName || "unknown"}
-
-INSTRUCTION: Greet them warmly${firstName ? " as " + firstName : ""}. Ask their wedding date and city in ONE short casual line. Do NOT introduce yourself or mention brochure.`;
     }
 
     const reply = await getAIReply(phone, contextMsg);
