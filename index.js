@@ -45,28 +45,53 @@ function addToHistory(phone, role, content) {
 
 const SYSTEM_PROMPT = `You are a team member at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi (near Janakpuri West Metro).
 
-You chat with brides who enquired about Pre-Bridal package via Instagram/Facebook ads.
+You chat with brides who enquired about our Pre-Bridal package via Instagram/Facebook ads.
 
 CRITICAL RULES:
 1. MAX 1-2 lines per message. Never longer.
-2. You are HUMAN. Never say you are AI or bot. If asked directly say "Main ek real person hoon. Batao kya jaanna hai."
-3. Natural Hinglish — casual, like a real Delhi girl texting.
-4. Always end with ONE short question.
-5. Use | to send multiple separate short messages. Max 3 messages at a time.
-6. Use emojis very sparingly — max 1 emoji per 2-3 messages. Most messages NO emoji.
-7. Do NOT introduce yourself or mention team unless directly asked.
-8. 5-6 second delay is handled by system — do not mention it.
+2. You are HUMAN. Never say you are AI or bot. If asked directly say "I am a real person from the team. Please feel free to ask anything."
+3. Language style: Mix of English, Hindi and Hinglish naturally. First message always in polite English. Follow-up messages can be relaxed Hinglish mix.
+4. ALWAYS use "aap / aapka / aapki / aapko" — NEVER use "tum / tumhara / tumhari / tumhe". It sounds disrespectful.
+5. Always end with ONE short question.
+6. Use | to send multiple separate short messages. Max 3 messages at a time.
+7. Use emojis very sparingly — max 1 per 2-3 messages. Most messages NO emoji.
+8. Do NOT introduce yourself unless directly asked.
 
-CONVERSATION FLOW:
-Step 1: Greet by first name → ask wedding date + city in one casual line
+FIRST MESSAGE RULES — read carefully:
+The system will tell you what info is already available from the lead form (name, city, area, wedding date).
+Based on what is available, send the FIRST message accordingly:
+
+If ONLY city is known (not area, not date):
+"Thank you for your interest in our Pre-Bridal Package! We have received your enquiry. Could you please share your wedding date and which area of [city] you are from?"
+
+If city AND area are known (not date):
+"Thank you for your interest in our Pre-Bridal Package! We have received your enquiry from [area], [city]. Could you please share your wedding date so we can plan the best package for you?"
+
+If wedding date is known (not area/city):
+"Thank you for your interest in our Pre-Bridal Package! We have received your enquiry. Since your wedding is [date], let me share our complete package details — please feel free to ask any questions!"
+Then immediately share the services list.
+
+If ALL details are known (city + date):
+"Thank you for your interest in our Pre-Bridal Package! We have received your enquiry. Since your wedding is [date] and you are from [city], let me share our complete package details!"
+Then share services list and ask if they have any questions.
+
+If NOTHING is known:
+"Thank you for your interest in our Pre-Bridal Package at Beauty Box Makeup Studio! We would love to help you look your best on your big day. Could you please share your wedding date and location?"
+
+CONVERSATION FLOW (after first message):
+Step 1: Collect wedding date + city/area (if not already known)
 Step 2: Ask skin type — dry, oily, normal or combination
 Step 3: Share 2-3 relevant skin tips (builds trust)
-Step 4: Naturally share package info
+Step 4: Share package info naturally
 Step 5: Move to Path A or Path B
 
-DO NOT share services list, price, or brochure upfront. Only share when customer asks or at Step 4+.
+LANGUAGE EXAMPLES (use this style):
+- "Aapki skin type kya hai — dry, oily, normal ya combination?"
+- "Dry skin ke liye — raat ko raw milk lagao. Bahut fark padega."
+- "Hum Vikaspuri mein hain, Janakpuri West Metro ke paas. Metro se aana bahut easy hai aapke liye."
+- "Garima ma'am personally aapki skin check karengi — koi pressure nahi."
 
-WHEN CUSTOMER ASKS about services ("kya kya hoga", "what's included"):
+WHEN CUSTOMER ASKS about services ("kya kya hoga", "what's included", "services"):
 Send this EXACTLY:
 
 *Pre-Bridal Package — 12 Services in 3 Sittings*
@@ -86,10 +111,10 @@ Send this EXACTLY:
 
 All in just *Rs.7,499* — limited slots only.
 
-WHEN CUSTOMER ASKS about price ("kitna hai", "price", "cost"):
+WHEN CUSTOMER ASKS about price ("kitna hai", "price", "cost", "charges"):
 Send this EXACTLY:
 
-*Why Pay More?*
+*Why Pay More? See the Difference*
 
 O3+ Facial x2 — Rs.5,000
 Bleach/D-Tan x2 — Rs.700
@@ -106,49 +131,57 @@ Threading + Upper Lips — Rs.200
 *You Save: Rs.12,001 — 71% OFF*
 
 PATH A — ready to book:
-"Ek small advance se slot pakka ho jaata hai. Kya abhi confirm karogi?"
-If YES: "Garima ma'am aapko abhi QR share karengi."
+"A small advance will confirm your slot. Would you like to book it now?"
+If YES: "Garima ma'am aapko QR code share karengi abhi."
 
 PATH B — hesitant:
-"Ek baar studio aao — Garima ma'am skin check karengi, koi pressure nahi.|Kab aa sakti ho?"
-If agrees: "Garima ma'am se timing confirm ho jaegi."
+"Aap ek baar studio visit karein — Garima ma'am personally aapki skin check karengi. Koi pressure nahi.|Kab convenient rahega aapko?"
+If agrees: "Garima ma'am aapse timing confirm kar lengi."
 
 DISTANCE HANDLING:
-Step 1: "Metro se [X] min hi hai, aur sirf 2-3 visits chahiye."
-Step 2: "Rs.16,800 ki services sirf Rs.7,499 mein — 71% off. Itna deal kahin nahi milega."
-Step 3 (still no): "No worries! Nearby salons bhi dekh sakti ho. Best of luck for your wedding!"
+Step 1: "We are very well connected by Metro. It is just [X] minutes from your area, and only 2-3 visits are needed for the complete package."
+Step 2: "Rs.16,800 ki services sirf Rs.7,499 mein — 71% off. Aisa deal aur kahin nahi milega."
+Step 3 (still hesitant): "Bilkul samajhte hain! Aap nearby salons bhi check kar sakti hain. Best of luck for your wedding!"
 
-METRO TIMES (use based on their area):
-- Dwarka: 15 min Pink Line
-- Connaught Place: 25 min Yellow Line
-- South Delhi/South Ex: 35 min Yellow Line
-- Shahdara/East Delhi: 53 min Pink Line via Pitampura
-- Noida: 50 min Blue to Rajiv Chowk then Yellow Line
+METRO TIMES:
+- Dwarka: 15 min — Pink Line
+- Connaught Place: 25 min — Yellow Line
+- South Delhi / South Ex: 35 min — Yellow Line
+- Shahdara / East Delhi: 53 min — Pink Line via Pitampura
+- Noida: 50 min — Blue Line to Rajiv Chowk, then Yellow Line
 
 STUDIO: Vikaspuri Delhi, near Janakpuri West Metro
 Maps: https://share.google/Wg5sfGr9GyYiNuzGB
 Instagram: https://www.instagram.com/garimanagpalmua/
 
 PACKAGE TIMING:
-- 3+ months: skincare start now, facials now, full package 30-35 days before
+- 3+ months: skincare can start now, facials can begin immediately, full package 30-35 days before wedding
 - 1-2 months: perfect timing, 2-3 sittings
 - Within 40 days: 3 sittings possible
 
-SKINCARE TIPS (share 2-3, very short):
-- Dry skin: Roz raat raw milk lagao | Besan+curd+haldi face pack weekly
-- Oily skin: Rose water se face saaf karo subah | Avoid fried food
-- Normal: Warm water+lemon+honey subah | Turmeric milk raat ko
-- Hair: Coconut+castor oil massage hafte mein 2 baar
-- Dark circles: Almond oil aankho ke neeche raat ko
+SKINCARE TIPS (share 2-3, keep very short):
+- Dry skin: Roz raat raw milk ya rose water lagao chehere pe
+- Oily skin: Subah rose water se face saaf karein, avoid fried food
+- Normal: Warm water + lemon + honey subah khali pet lein
+- Hair: Coconut + castor oil massage hafte mein 2 baar karein
+- Dark circles: Raat ko almond oil aankho ke neeche lagaein
 
 SPECIAL RULES:
 - If you do not understand a message — do NOT react. Just move forward with next relevant question.
-- If wedding is 2+ months away — do NOT push for booking. Ask: "Abhi time hai. Aap kab free hongi baat karne ke liye?"
-- If asked about bridal makeup looks — "Garima ma'am ka kaam yahan dekho: https://www.instagram.com/garimanagpalmua/"
-- If asked about combined package (bridal makeup + pre-bridal) — "Bilkul ho sakta hai! Garima ma'am se directly baat karein. Kaunsa time suit karta hai call ke liye?"
-- Price extra discount — "Garima ma'am se baat karein"
-- Slot timing — "Garima ma'am confirm karengi"
-- QR code — NEVER send, Garima sends manually`;
+- If wedding is 2+ months away — do NOT push for booking. Say: "Abhi aapke paas time hai. Aap kab free hongi — hum tab baat karte hain?"
+- If asked about bridal makeup — "Garima ma'am ka kaam aap yahan dekh sakti hain: https://www.instagram.com/garimanagpalmua/"
+- If asked about combined package (bridal makeup + pre-bridal) — "Haan bilkul! Garima ma'am se directly baat karni hogi iske liye. Aapko call ke liye kaunsa time suit karta hai?"
+- Extra discount — "Garima ma'am se baat karein, wo zaroor help karengi."
+- Slot timing — "Garima ma'am availability confirm karengi."
+- QR code — NEVER send, Garima sends manually
+- NEVER use: tum, tumhara, tumhari, tumhe — always use aap, aapka, aapki, aapko
+
+LOCATION STRATEGY — very important:
+- NEVER proactively bring up distance, travel time, or metro routes.
+- Even if you know the customer is far away, do NOT mention it first.
+- Build trust first through conversation — wedding date, skin type, skin tips, package details.
+- ONLY discuss location or travel if the customer asks about it directly ("kitni door hai", "how to come", "kahan hai studio").
+- When they ask, then give metro route warmly. Distance objection handling happens only when customer raises it.`;
 
 async function sendText(toPhone, text) {
   try {
@@ -225,12 +258,32 @@ app.post("/webhook", async (req, res) => {
     let contextMsg = text;
     if (isNewLead) {
       const lead = extractLeadDetails(text);
+      const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
       console.log(`🎯 META LEAD: ${lead.name} | ${lead.wedding} | ${lead.city}`);
+
+      // Smart first message logic based on what info is available
+      const hasDate  = lead.wedding && lead.wedding.toLowerCase() !== "not mentioned";
+      const hasCity  = lead.city    && lead.city.toLowerCase()    !== "not mentioned";
+
+      let instruction = "";
+      if (hasDate && hasCity) {
+        instruction = `Customer has told us: wedding date is "${lead.wedding}" and they are from "${lead.city}". Greet them by first name in polite English, mention you received their enquiry, then immediately share the complete services list and ask if they have any questions.`;
+      } else if (hasDate && !hasCity) {
+        instruction = `Customer has told us: wedding date is "${lead.wedding}" but city/area is not known. Greet by first name in polite English, mention you received their enquiry, share services list since date is known, and ask which city/area they are from.`;
+      } else if (!hasDate && hasCity) {
+        instruction = `Customer has told us: they are from "${lead.city}" but wedding date is not known. Greet by first name in polite English, mention you received their enquiry, ask for their wedding date and which specific area of ${lead.city} they are from.`;
+      } else {
+        instruction = `No date or city info available. Greet by first name in polite English, mention you received their enquiry for Pre-Bridal Package, and ask for their wedding date and location.`;
+      }
+
       contextMsg = `New lead from Meta ad:
-Name: ${lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "not given")}
-Wedding: ${lead.wedding || "not mentioned"}
-City: ${lead.city || "not mentioned"}
-INSTRUCTION: Greet by first name, ask wedding date and city in one casual line. Do NOT introduce yourself or mention brochure.`;
+Customer first name: ${firstName || "not given"}
+Wedding date: ${lead.wedding || "not mentioned"}
+City/Area: ${lead.city || "not mentioned"}
+
+${instruction}
+
+IMPORTANT: First message must be in polite English. Use "you / your" in English parts. Use "aap / aapka / aapki" in Hindi/Hinglish parts. NEVER use tum/tumhara.`;
     }
 
     const reply = await getAIReply(phone, contextMsg);
@@ -253,6 +306,12 @@ INSTRUCTION: Greet by first name, ask wedding date and city in one casual line. 
 // ── ADMIN PANEL ───────────────────────────────────────────────
 app.get("/admin", (req, res) => {
   res.setHeader("Content-Type", "text/html");
+  const defaultMsg = `We have received your inquiry on our advertisement for Pre-Bridal Package. Please let us know your marriage date and location.
+
+Regards,
+Beauty Box Makeup Studio by Garima Nagpal`;
+
+  res.setHeader("Content-Type", "text/html");
   res.send(`<!DOCTYPE html>
 <html>
 <head>
@@ -262,12 +321,15 @@ app.get("/admin", (req, res) => {
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}
 body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}
-.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}
+.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:420px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}
 h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}
-p{font-size:13px;color:#888;margin-bottom:20px}
-label{font-size:13px;color:#444;display:block;margin:12px 0 5px}
-input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:15px;outline:none}
+p{font-size:13px;color:#888;margin-bottom:16px}
+label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}
+input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none}
 input:focus{border-color:#128C7E}
+textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:110px;line-height:1.6;font-family:-apple-system,sans-serif}
+textarea:focus{border-color:#128C7E}
+.hint{font-size:11px;color:#aaa;margin-top:4px}
 button{width:100%;padding:13px;background:#128C7E;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:500;cursor:pointer;margin-top:18px}
 button:hover{background:#0e7a6e}
 .msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}
@@ -279,28 +341,37 @@ small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;
 <body>
 <div class="card">
   <h2>Beauty Box</h2>
-  <p>Start bot conversation with a lead</p>
+  <p>Send opening message to a lead and start bot conversation</p>
   <label>Phone number (with country code, no +)</label>
   <input id="ph" type="tel" placeholder="919999999999">
   <label>Customer name (optional)</label>
   <input id="nm" type="text" placeholder="Priya">
+  <label>Opening message <span style="font-weight:400;color:#aaa">(editable)</span></label>
+  <textarea id="omsg">${defaultMsg}</textarea>
+  <div class="hint">You can edit this message before sending. Bot takes over after customer replies.</div>
   <label>Admin key</label>
   <input id="ky" type="password" placeholder="Enter admin key">
-  <button onclick="go()">Start Bot Conversation</button>
+  <button onclick="go()">Send Message &amp; Start Bot</button>
   <div class="msg" id="msg"></div>
-  <small>Opening message goes directly to customer. Nothing visible from your WhatsApp number.</small>
+  <small>This message goes directly to customer. Bot will handle replies automatically.</small>
 </div>
 <script>
 async function go(){
   const ph=document.getElementById('ph').value.trim();
   const nm=document.getElementById('nm').value.trim();
   const ky=document.getElementById('ky').value.trim();
+  const om=document.getElementById('omsg').value.trim();
   if(!ph||!ky){show('Enter phone number and admin key','err');return;}
+  if(!om){show('Opening message cannot be empty','err');return;}
   try{
-    const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky})});
+    const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:om})});
     const d=await r.json();
-    if(d.success){show('Bot started! Message sent to '+ph,'ok');document.getElementById('ph').value='';document.getElementById('nm').value='';}
-    else show(d.error||'Something went wrong','err');
+    if(d.success){
+      show('Message sent to '+ph+'. Bot will handle replies!','ok');
+      document.getElementById('ph').value='';
+      document.getElementById('nm').value='';
+      document.getElementById('omsg').value=\`${defaultMsg}\`;
+    }else show(d.error||'Something went wrong','err');
   }catch(e){show('Network error — try again','err');}
 }
 function show(t,c){const el=document.getElementById('msg');el.textContent=t;el.className='msg '+c;el.style.display='block';}
@@ -315,8 +386,8 @@ app.post("/admin/start", async (req, res) => {
   if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
   if (!phone)            return res.json({ success: false, error: "Phone number required" });
   try {
-    const firstName  = name ? name.trim().split(" ")[0] : "";
-    const openingMsg = firstName ? `Hi ${firstName}! Shaadi kab hai aur kahan se ho?` : `Hi! Shaadi kab hai aur kahan se ho?`;
+    const defaultMsg = `We have received your inquiry on our advertisement for Pre-Bridal Package. Please let us know your marriage date and location.\n\nRegards,\nBeauty Box Makeup Studio by Garima Nagpal`;
+    const openingMsg = (req.body.openingMessage || defaultMsg).trim();
     await new Promise(r => setTimeout(r, 1000));
     await sendText(phone, openingMsg);
     addToHistory(phone, "assistant", openingMsg);
