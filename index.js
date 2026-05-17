@@ -10,11 +10,21 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const WAPI_VENDOR_UID   = process.env.WAPI_VENDOR_UID   || process.env.WAPI_INSTANCE_ID || "";
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";
 const ADMIN_KEY         = process.env.ADMIN_KEY         || "beautybox2024";
+const ADMIN_PHONE       = "919560277217";  // Gaurav's number — bot follows instructions from this number
+const GARIMA_PHONE      = "919354260517";  // Garima ma'am's number — shared when customer wants to call
+const adminInstructions = [];              // Runtime instructions from admin number
 const APP_URL           = (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : process.env.APP_URL || "").replace(/\/$/, "");
 const PDF_NAME          = "Beauty Box Pre-Bridal Package.pdf";
 
-const META_TRIGGER = "i filled in your form and would like to know more about your business";
-function isMetaLead(text) { return text.toLowerCase().includes(META_TRIGGER); }
+const META_TRIGGER  = "i filled in your form and would like to know more about your business";
+const AD_DM_TRIGGER = "hello! can i get more info on this"; // Direct DM from Instagram/Facebook ad
+function isMetaLead(text) {
+  const lower = text.toLowerCase().trim();
+  return lower.includes(META_TRIGGER) || lower.includes(AD_DM_TRIGGER);
+}
+function isAdDM(text) {
+  return text.toLowerCase().trim().includes(AD_DM_TRIGGER);
+}
 
 function extractLeadDetails(text) {
   const d = {};
@@ -32,6 +42,7 @@ function extractLeadDetails(text) {
 
 const conversations   = new Map();
 const lastSentMessage = new Map();
+const registeredLeads = new Set(); // Numbers activated via admin panel
 
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
@@ -49,13 +60,14 @@ You chat with brides who enquired about our Pre-Bridal package via Instagram/Fac
 
 CRITICAL RULES:
 1. MAX 1-2 lines per message. Never longer.
-2. You are HUMAN. Never say you are AI or bot. If asked directly say "I am a real person from the team. Please feel free to ask anything."
-3. Language style: Mix of English, Hindi and Hinglish naturally. First message always in polite English. Follow-up messages can be relaxed Hinglish mix.
-4. ALWAYS use "aap / aapka / aapki / aapko" — NEVER use "tum / tumhara / tumhari / tumhe". It sounds disrespectful.
-5. Always end with ONE short question.
-6. Use | to send multiple separate short messages. Max 3 messages at a time.
-7. Use emojis very sparingly — max 1 per 2-3 messages. Most messages NO emoji.
-8. Do NOT introduce yourself unless directly asked.
+2. Your name is Radhya. You are a girl. You work at Beauty Box Makeup Studio. Only reveal your name if someone directly asks "what is your name" or "aapka naam kya hai". Do NOT introduce your name proactively.
+3. You are HUMAN. Never say you are AI or bot. If someone asks "are you a bot/AI" — say "Nahi, main Radhya hoon — Beauty Box team se. Batao, kaise help karein aapki?"
+4. Language style: Mix of English, Hindi and Hinglish naturally. First message always in polite English. Follow-up messages can be relaxed Hinglish mix.
+5. ALWAYS use "aap / aapka / aapki / aapko" — NEVER use "tum / tumhara / tumhari / tumhe". It sounds disrespectful.
+6. Always end with ONE short question.
+7. Use | to send multiple separate short messages. Max 3 messages at a time.
+8. Use emojis very sparingly — max 1 per 2-3 messages. Most messages NO emoji.
+9. Do NOT introduce yourself unless directly asked. If asked your name, say "Main Radhya hoon." unless directly asked.
 
 FIRST MESSAGE RULES — read carefully:
 The system will tell you what info is already available from the lead form (name, city, area, wedding date).
@@ -168,6 +180,8 @@ SKINCARE TIPS (share 2-3, keep very short):
 
 SPECIAL RULES:
 - If you do not understand a message — do NOT react. Just move forward with next relevant question.
+- If someone wants to speak to someone directly or asks to call — say "Aap Garima ma'am se directly baat kar sakti hain: +91 93542 60517"
+- If someone asks your name — say "Main Radhya hoon, Beauty Box team se."
 - If wedding is 2+ months away — do NOT push for booking. Say: "Abhi aapke paas time hai. Aap kab free hongi — hum tab baat karte hain?"
 - If asked about bridal makeup — "Garima ma'am ka kaam aap yahan dekh sakti hain: https://www.instagram.com/garimanagpalmua/"
 - If asked about combined package (bridal makeup + pre-bridal) — "Haan bilkul! Garima ma'am se directly baat karni hogi iske liye. Aapko call ke liye kaunsa time suit karta hai?"
@@ -186,10 +200,12 @@ LOCATION STRATEGY — very important:
 async function sendText(toPhone, text) {
   try {
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
-    await axios.post(url, { phone_number: toPhone, message_body: text, message_type: "text" });
+    const res  = await axios.post(url, { phone_number: toPhone, message_body: text, message_type: "text" });
     console.log(`✅ Sent to ${toPhone}: "${text.substring(0, 60)}"`);
+    console.log(`📡 WAPI response:`, JSON.stringify(res.data));
   } catch (err) {
-    console.error(`❌ Send failed:`, err?.response?.data || err.message);
+    console.error(`❌ Send failed to ${toPhone}:`, JSON.stringify(err?.response?.data || err.message));
+    console.error(`❌ Status:`, err?.response?.status);
   }
 }
 
@@ -206,9 +222,15 @@ async function sendPDF(toPhone) {
 
 async function getAIReply(phone, contextMsg) {
   addToHistory(phone, "user", contextMsg);
+
+  // Append any live admin instructions to system prompt
+  const liveInstructions = adminInstructions.length > 0
+    ? "\n\nLIVE INSTRUCTIONS FROM ADMIN (follow these immediately):\n" + adminInstructions.map((ins, i) => (i+1) + ". " + ins).join("\n")
+    : "";
+
   const res = await axios.post(
     "https://api.anthropic.com/v1/messages",
-    { model: "claude-sonnet-4-20250514", max_tokens: 300, system: SYSTEM_PROMPT, messages: getHistory(phone) },
+    { model: "claude-sonnet-4-20250514", max_tokens: 300, system: SYSTEM_PROMPT + liveInstructions, messages: getHistory(phone) },
     { headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" } }
   );
   const reply = res.data.content?.[0]?.text || "Ek second.";
@@ -242,12 +264,30 @@ app.post("/webhook", async (req, res) => {
     if (!text && !hasMedia) return;
     if (text && text.trim() === "") return;
 
+    // ── ADMIN NUMBER: Gaurav can train/instruct bot via WhatsApp ──
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.endsWith("9560277217")) {
+      console.log(`👨‍💼 ADMIN INSTRUCTION from ${phone}: "${text}"`);
+      adminInstructions.push(text);
+      // Keep only last 5 instructions
+      if (adminInstructions.length > 5) adminInstructions.shift();
+      await sendText(phone, `Understood. Instruction noted: "${text.substring(0, 80)}"`);
+      return;
+    }
+
     const isNewLead  = isMetaLead(text);
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
+    const isRegistered = registeredLeads.has(phone);
 
-    if (!isNewLead && !hasHistory) {
+    if (!isNewLead && !hasHistory && !isRegistered) {
       console.log(`⏭️ Ignored: ${phone}`);
       return;
+    }
+
+    // First reply from registered lead — treat as new conversation
+    if (isRegistered && !hasHistory && !isNewLead) {
+      console.log(`📋 REGISTERED LEAD replied: ${phone}`);
+      registeredLeads.delete(phone); // Remove after first interaction
     }
 
     if (hasMedia && !text) {
@@ -257,33 +297,55 @@ app.post("/webhook", async (req, res) => {
 
     let contextMsg = text;
     if (isNewLead) {
-      const lead = extractLeadDetails(text);
-      const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
-      console.log(`🎯 META LEAD: ${lead.name} | ${lead.wedding} | ${lead.city}`);
 
-      // Smart first message logic based on what info is available
-      const hasDate  = lead.wedding && lead.wedding.toLowerCase() !== "not mentioned";
-      const hasCity  = lead.city    && lead.city.toLowerCase()    !== "not mentioned";
+      // ── AD DM TRIGGER: "Hello! Can I get more info on this?" ──
+      if (isAdDM(text)) {
+        const firstName = name ? name.split(" ")[0] : "";
+        console.log(`📱 AD DM LEAD: ${firstName || "unknown"} from ${phone}`);
+        contextMsg = `New lead from Instagram/Facebook ad DM.
+Customer name: ${firstName || "not given"}
+They sent: "${text}"
 
-      let instruction = "";
-      if (hasDate && hasCity) {
-        instruction = `Customer has told us: wedding date is "${lead.wedding}" and they are from "${lead.city}". Greet them by first name in polite English, mention you received their enquiry, then immediately share the complete services list and ask if they have any questions.`;
-      } else if (hasDate && !hasCity) {
-        instruction = `Customer has told us: wedding date is "${lead.wedding}" but city/area is not known. Greet by first name in polite English, mention you received their enquiry, share services list since date is known, and ask which city/area they are from.`;
-      } else if (!hasDate && hasCity) {
-        instruction = `Customer has told us: they are from "${lead.city}" but wedding date is not known. Greet by first name in polite English, mention you received their enquiry, ask for their wedding date and which specific area of ${lead.city} they are from.`;
+INSTRUCTION: Follow this EXACT conversation flow:
+Step 1 — Greet warmly in polite English. Ask for their marriage date ONLY. Keep it short — one line.
+(Wait for their reply before moving to step 2)
+
+After they share date → Step 2: Ask for their city/area.
+After they share location → Step 3: Share pre-bridal package details (services list + price).
+After sharing package → Step 4: Ask skin type + share 2-3 skin tips. Then move to booking or studio visit.
+
+First message should be: greet + ask marriage date only. Nothing else.
+NEVER use tum/tumhara. Use aap/aapka/aapki.`;
+
       } else {
-        instruction = `No date or city info available. Greet by first name in polite English, mention you received their enquiry for Pre-Bridal Package, and ask for their wedding date and location.`;
-      }
+        // ── META LEAD FORM TRIGGER ──────────────────────────────
+        const lead = extractLeadDetails(text);
+        const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
+        console.log(`🎯 META FORM LEAD: ${lead.name} | ${lead.wedding} | ${lead.city}`);
 
-      contextMsg = `New lead from Meta ad:
+        const hasDate = lead.wedding && lead.wedding.toLowerCase() !== "not mentioned";
+        const hasCity = lead.city    && lead.city.toLowerCase()    !== "not mentioned";
+
+        let instruction = "";
+        if (hasDate && hasCity) {
+          instruction = `Customer has told us: wedding date is "${lead.wedding}" and they are from "${lead.city}". Greet by first name in polite English, mention you received their enquiry, then immediately share the complete services list and ask if they have any questions.`;
+        } else if (hasDate && !hasCity) {
+          instruction = `Wedding date is "${lead.wedding}" but city/area not known. Greet by first name, mention you received their enquiry, share services list since date is known, and ask which city/area they are from.`;
+        } else if (!hasDate && hasCity) {
+          instruction = `They are from "${lead.city}" but wedding date not known. Greet by first name, ask for wedding date and which specific area of ${lead.city} they are from.`;
+        } else {
+          instruction = `No date or city info. Greet by first name in polite English, mention you received their enquiry for Pre-Bridal Package, and ask for their wedding date and location.`;
+        }
+
+        contextMsg = `New lead from Meta ad form:
 Customer first name: ${firstName || "not given"}
 Wedding date: ${lead.wedding || "not mentioned"}
 City/Area: ${lead.city || "not mentioned"}
 
 ${instruction}
 
-IMPORTANT: First message must be in polite English. Use "you / your" in English parts. Use "aap / aapka / aapki" in Hindi/Hinglish parts. NEVER use tum/tumhara.`;
+IMPORTANT: First message in polite English. Use aap/aapka/aapki in Hindi parts. NEVER use tum/tumhara.`;
+      }
     }
 
     const reply = await getAIReply(phone, contextMsg);
@@ -351,23 +413,25 @@ small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;
   <div class="hint">You can edit this message before sending. Bot takes over after customer replies.</div>
   <label>Admin key</label>
   <input id="ky" type="password" placeholder="Enter admin key">
-  <button onclick="go()">Send Message &amp; Start Bot</button>
+  <div style="display:flex;gap:10px;margin-top:18px">
+    <button onclick="go(true)" style="flex:1;background:#128C7E">Send Message &amp; Activate Bot</button>
+    <button onclick="go(false)" style="flex:1;background:#555;font-size:13px">Activate Bot Only<br><span style="font-size:11px;opacity:0.8">(I already sent message)</span></button>
+  </div>
   <div class="msg" id="msg"></div>
-  <small>This message goes directly to customer. Bot will handle replies automatically.</small>
+  <small>Bot will handle all replies from this number automatically.</small>
 </div>
 <script>
-async function go(){
+async function go(sendMsg){
   const ph=document.getElementById('ph').value.trim();
   const nm=document.getElementById('nm').value.trim();
   const ky=document.getElementById('ky').value.trim();
   const om=document.getElementById('omsg').value.trim();
   if(!ph||!ky){show('Enter phone number and admin key','err');return;}
-  if(!om){show('Opening message cannot be empty','err');return;}
   try{
-    const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:om})});
+    const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:sendMsg?om:'',sendMessage:sendMsg})});
     const d=await r.json();
     if(d.success){
-      show('Message sent to '+ph+'. Bot will handle replies!','ok');
+      show(sendMsg?'Message sent to '+ph+'. Bot activated!':'Bot activated for '+ph+'. Waiting for reply...','ok');
       document.getElementById('ph').value='';
       document.getElementById('nm').value='';
       document.getElementById('omsg').value=\`${defaultMsg}\`;
@@ -386,12 +450,18 @@ app.post("/admin/start", async (req, res) => {
   if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
   if (!phone)            return res.json({ success: false, error: "Phone number required" });
   try {
-    const defaultMsg = `We have received your inquiry on our advertisement for Pre-Bridal Package. Please let us know your marriage date and location.\n\nRegards,\nBeauty Box Makeup Studio by Garima Nagpal`;
-    const openingMsg = (req.body.openingMessage || defaultMsg).trim();
-    await new Promise(r => setTimeout(r, 1000));
-    await sendText(phone, openingMsg);
-    addToHistory(phone, "assistant", openingMsg);
-    console.log(`🚀 ADMIN: Bot started for ${phone}`);
+    const sendMsg = req.body.sendMessage !== false;
+    if (sendMsg && req.body.openingMessage) {
+      const openingMsg = req.body.openingMessage.trim();
+      await new Promise(r => setTimeout(r, 1000));
+      await sendText(phone, openingMsg);
+      addToHistory(phone, "assistant", openingMsg);
+      console.log(`🚀 ADMIN: Message sent + bot started for ${phone}`);
+    } else {
+      // Activate only — register number, wait for customer reply
+      registeredLeads.add(phone);
+      console.log(`📋 ADMIN: Bot activated (no message) for ${phone}`);
+    }
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });
