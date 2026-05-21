@@ -39,10 +39,10 @@ async function initSheets() {
 
 async function ensureHeaders() {
   try {
-    const activeHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Status", "Last Message", "First Seen", "Last Updated"];
+    const activeHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Status", "Last Message", "First Seen", "Last Updated", "Service Path"];
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: "Active Leads!A1:I1",
+      range: "Active Leads!A1:J1",
       valueInputOption: "RAW",
       resource: { values: [activeHeaders] },
     });
@@ -94,7 +94,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
     }
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: "Active Leads!A:I",
+      range: "Active Leads!A:J",
       valueInputOption: "RAW",
       resource: {
         values: [[
@@ -102,6 +102,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
           status || "🆕 New Lead",
           (lastMsg || "").substring(0, 200),
           nowIST(), nowIST(),
+          "", // Service Path — filled when customer selects A/B/C/D
         ]],
       },
     });
@@ -118,9 +119,9 @@ async function updateActiveLead(phone, updates) {
     if (row < 1) return;
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:I${row}`,
+      range: `Active Leads!A${row}:J${row}`,
     });
-    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", ""];
+    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", ""];
     const updated = [
       current[0] || phone,
       updates.name    || current[1] || "",
@@ -131,10 +132,11 @@ async function updateActiveLead(phone, updates) {
       (updates.lastMsg || current[6] || "").substring(0, 200),
       current[7] || nowIST(),
       nowIST(),
+      updates.servicePath || current[9] || "", // Column J — Service Path
     ];
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:I${row}`,
+      range: `Active Leads!A${row}:J${row}`,
       valueInputOption: "RAW",
       resource: { values: [updated] },
     });
@@ -211,9 +213,10 @@ function detectStatus(aiReply, customerMsg) {
   if (reply.includes("garima ma'am se timing confirm")) return "🏠 Studio Visit Scheduled";
   if (reply.includes("pre-bridal package — 12 services")) return "📋 Package Shared";
   if (reply.includes("why pay more")) return "💰 Price Shared";
-  if (reply.includes("family se baat kar lijiye") || reply.includes("mummy ko dikhayein")) return "👨‍👩‍👧 Awaiting Family Approval";
+  if (reply.includes("combo price") && reply.includes("16,500")) return "💑 Combo Interest";
+  if (reply.includes("hydra facial package")) return "💧 Hydra Interest";
+  if (reply.includes("family se baat kar lijiye") || reply.includes("mummy ko dikhayein")) return "👨‍👩‍👧 Awaiting Family OK";
   if (reply.includes("abhi time hai") && reply.includes("skincare")) return "🌱 Nurture - Far Wedding";
-  if (reply.includes("individual service")) return "💅 Single Service Inquiry";
 
   if (msg.includes("nahi chahiye") || msg.includes("not interested") || msg.includes("don't want")) return "❌ Not Interested";
   if (msg.includes("yes") || msg.includes("confirm") || msg.includes("book")) return "✅ Interested";
@@ -247,12 +250,35 @@ function extractLeadDetails(text) {
   return d;
 }
 
+// ── WEDDING DATE EXTRACTOR FROM CHAT ─────────────────────────
+function extractWeddingDateFromChat(text) {
+  const months = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec";
+  const patterns = [
+    // "15th june 2025", "15 june", "15 june 25"
+    new RegExp(`(\\d{1,2})\\s*(st|nd|rd|th)?\\s*(${months})\\s*(\\d{2,4})?`, "i"),
+    // "june 15", "june 15 2025"
+    new RegExp(`(${months})\\s+(\\d{1,2})(\\s*(\\d{2,4}))?`, "i"),
+    // "15/6/2025", "15-6-25", "15/06"
+    /(\d{1,2})[\/\-](\d{1,2})([\/\-](\d{2,4}))?/,
+    // Hindi style: "15 ko", "june mein", month name alone with context
+    new RegExp(`(${months})\\s*(mein|ko|tak|me)?`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[0].trim();
+  }
+  return null;
+}
+
 // ── CONVERSATION MEMORY ───────────────────────────────────────
-const conversations     = new Map();
-const lastSentMessage   = new Map();
-const lastMessageTime   = new Map(); // For nudge system
-const nudgeSent         = new Map(); // Track if nudge already sent
-const adminInstructions = [];
+const conversations      = new Map();
+const lastSentMessage    = new Map();
+const lastMessageTime    = new Map();
+const nudgeSent          = new Map();
+const pendingMenuSelect  = new Set();  // Phones awaiting menu selection
+const customerPath       = new Map();  // Tracks A/B/C/D path per phone
+const adminInstructions  = [];
+let   adminTrainerActive = false;      // Trainer mode — activated only when admin says "Radhya"
 
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
@@ -264,7 +290,105 @@ function addToHistory(phone, role, content) {
   if (h.length > 10) h.splice(0, h.length - 10);
 }
 
-// ── NUDGE SYSTEM (24-hour silence re-engagement) ──────────────
+// ── MENU SYSTEM ───────────────────────────────────────────────
+// Button labels must be ≤20 chars for WhatsApp interactive list
+const MENU_BODY = `Welcome to *Beauty Box Makeup Studio* 💄
+
+Aap kaunsi service ke baare mein jaanna chahti hain? Ek option choose karein 👇`;
+
+const MENU_TEXT_FALLBACK = `Welcome to *Beauty Box Makeup Studio* 💄
+
+Aap kaunsi service ke baare mein jaanna chahti hain?
+
+*A* — Pre-Bridal Package
+*B* — Pre Bridal+Makeup
+*C* — Hydra Package
+*D* — Other Services
+
+Reply *A, B, C ya D* karein 😊`;
+
+async function sendMenuButtons(toPhone) {
+  try {
+    // Try interactive list message first
+    const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
+    const payload = {
+      phone_number: toPhone,
+      message_type: "interactive",
+      interactive: {
+        type: "list",
+        body: { text: MENU_BODY },
+        action: {
+          button: "Choose Service",
+          sections: [{
+            title: "Beauty Box Services",
+            rows: [
+              { id: "A", title: "Pre-Bridal Package",    description: "12 services, 3 sittings" },
+              { id: "B", title: "Pre Bridal+Makeup",     description: "Complete bridal combo" },
+              { id: "C", title: "Hydra Package",         description: "Deep hydration facials" },
+              { id: "D", title: "Other Services",        description: "Waxing, hair, nails & more" }
+            ]
+          }]
+        }
+      }
+    };
+    const res = await axios.post(url, payload);
+    console.log(`📋 Interactive menu sent to ${toPhone}`);
+    return res.data;
+  } catch (err) {
+    console.error(`⚠️ Interactive menu failed, using text fallback:`, err?.response?.data?.message || err.message);
+    // Text fallback — always works
+    await sendText(toPhone, MENU_TEXT_FALLBACK);
+  }
+}
+
+// Detect which menu option the customer selected
+function detectMenuSelection(text) {
+  const t = (text || "").trim().toLowerCase();
+  if (t === "a" || t === "1" || t.includes("pre-bridal") || t.includes("pre bridal")) return "A";
+  if (t === "b" || t === "2" || t.includes("combo") || (t.includes("bridal") && t.includes("makeup"))) return "B";
+  if (t === "c" || t === "3" || t.includes("hydra")) return "C";
+  if (t === "d" || t === "4" || t.includes("other") || t.includes("beauty service") || t.includes("wax") || t.includes("facial") || t.includes("hair") || t.includes("nail")) return "D";
+  return null;
+}
+
+// Build context message for AI based on selected path
+function buildPathContext(selectedPath, customerName, wedding, city, customerMsg) {
+  const name = customerName || "not given";
+  switch (selectedPath) {
+    case "A":
+      return `Customer selected: Pre-Bridal Package.
+Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
+Customer message: "${customerMsg}"
+INSTRUCTION: Follow pre-bridal flow. Ask wedding date if not known, then skin type (open-ended), curiosity hook, tips, package details, then closing Path A or B.
+Use polite English first then Hinglish. NEVER use tum/tumhara.`;
+
+    case "B":
+      return `Customer selected: Pre-Bridal + Bridal Makeup Combo.
+Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
+Customer message: "${customerMsg}"
+INSTRUCTION: Follow COMBO PATH B. Share combo pricing. Ask wedding date to assess timing. Then closing.
+Use polite English first then Hinglish.`;
+
+    case "C":
+      return `Customer selected: Hydra Facial Package.
+Name: ${name}
+Customer message: "${customerMsg}"
+INSTRUCTION: Follow HYDRA PATH C. Share hydra package details. Ask about skin concern to personalize.
+Use polite English first then Hinglish.`;
+
+    case "D":
+      return `Customer selected: Other Beauty Services.
+Name: ${name}
+Customer message: "${customerMsg}"
+INSTRUCTION: Follow PATH D. Ask which specific service they're looking for, then share the price from the complete price list.
+Use polite English first then Hinglish.`;
+
+    default:
+      return `Customer message: "${customerMsg}". Name: ${name}. Respond naturally and help them.`;
+  }
+}
+
+// ── NUDGE SYSTEM ──────────────────────────────────────────────
 const NUDGE_MESSAGES = [
   "Hi! Bas check kar rahi thi — koi sawaal tha kya? 😊",
   "Koi confusion ho package ke baare mein toh bata dijiye, help kar sakti hoon!",
@@ -276,23 +400,21 @@ function scheduleNudgeCheck() {
     const now = Date.now();
     for (const [phone, lastTime] of lastMessageTime.entries()) {
       const hoursSince = (now - lastTime) / (1000 * 60 * 60);
-      // Send nudge after 24 hours of silence, only once
       if (hoursSince >= 24 && !nudgeSent.get(phone)) {
         nudgeSent.set(phone, true);
         const nudge = NUDGE_MESSAGES[Math.floor(Math.random() * NUDGE_MESSAGES.length)];
         await sendText(phone, nudge);
-        // Add nudge to history so AI has context
         addToHistory(phone, "assistant", nudge);
         console.log(`🔔 Nudge sent to ${phone}`);
       }
     }
-  }, 30 * 60 * 1000); // Check every 30 minutes
+  }, 30 * 60 * 1000);
 }
 
 // ── SYSTEM PROMPT ─────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are a team member at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi (near Janakpuri West Metro).
 
-You chat with brides who enquired about our Pre-Bridal package via Instagram/Facebook ads.
+You chat with customers who enquired about our services via Instagram/Facebook ads.
 
 CRITICAL RULES:
 1. MAX 1-2 lines per message. Never longer.
@@ -306,20 +428,25 @@ CRITICAL RULES:
 9. Do NOT introduce yourself unless directly asked.
 
 ENRICHMENT RULES (always apply naturally):
-E1. EMOTIONAL MIRROR: Occasionally mirror the stress or excitement of wedding prep. E.g., "Shaadi ki tayaari mein itna kuch hota hai na — skin ka dhyan rakhna sabse zaroori hota hai 😊"
-E2. OPEN-ENDED QUESTIONS: Never ask yes/no questions. Make them invite description. Not "Oily skin hai?" — instead "Aapki skin subah uthke kaisi lagti hai — tight/dry, oily, ya mixed?"
-E3. CURIOSITY HOOK: Before jumping to the package, ask "Aapne pehle kabhi koi bridal facial ya skin treatment try ki hai?" — good or bad answer both open up conversation.
-E4. SOFT REPLY HANDLING: If customer says "ok", "hmm", "thik hai", "haan", "accha" — treat it as a green light and gently continue forward. Never stop there.
-E5. EXCITEMENT ANGLE: Use once during conversation: "Shaadi ke din aapki skin ekdum glow kare — yahi toh hamara kaam hai 🌸"
-E6. PERSONALISED TIPS: When sharing tips, tie them to what the customer shared (skin type, city, wedding timeline). Make it feel personal, not copy-paste.
+E1. EMOTIONAL MIRROR: Occasionally mirror wedding prep excitement/stress. "Shaadi ki tayaari mein itna kuch hota hai na — skin ka dhyan rakhna sabse zaroori hota hai 😊"
+E2. OPEN-ENDED QUESTIONS: Never yes/no. "Aapki skin subah uthke kaisi lagti hai — tight/dry, oily, ya mixed?"
+E3. CURIOSITY HOOK (pre-bridal leads): Before package pitch, ask "Aapne pehle kabhi koi bridal facial ya skin treatment try ki hai?"
+E4. SOFT REPLY HANDLING: "ok", "hmm", "thik hai", "haan", "accha" → treat as green light, move forward gently.
+E5. EXCITEMENT ANGLE (once per convo): "Shaadi ke din aapki skin ekdum glow kare — yahi toh hamara kaam hai 🌸"
+E6. PERSONALISED TIPS: Tie tips to what they told you — skin type, city, timeline.
+
+═══════════════════════════════════════
+PATH A — PRE-BRIDAL PACKAGE
+═══════════════════════════════════════
+For customers who selected Pre-Bridal Package (option A).
 
 CONVERSATION FLOW:
-Step 1: Greet by first name warmly → ask wedding date + city
+Step 1: Greet by first name → ask wedding date + city
 Step 2: Ask skin type (open-ended per E2)
-Step 3: CURIOSITY HOOK — ask if they've tried any treatments before (E3)
-Step 4: Share 2-3 personalized skincare tips based on what they said (E6)
-Step 5: Share package info naturally
-Step 6: Choose the right closing path based on their response
+Step 3: CURIOSITY HOOK — "Aapne pehle koi treatment try ki hai?" (E3)
+Step 4: Share 2-3 personalised tips based on skin type
+Step 5: Share package info
+Step 6: Close via Path A (advance) or Path B (studio visit)
 
 WHEN ASKED about services ("kya kya hoga", "services", "kya milega"):
 Send EXACTLY:
@@ -349,68 +476,218 @@ Send EXACTLY:
 O3+ Facial x2 — Rs.5,000
 Bleach/D-Tan x2 — Rs.700
 Full Body Bleach — Rs.2,000
-Manicure + Pedicure — Rs.1,000
-Loreal Hair Spa — Rs.1,000
-Full Body Wax — Rs.2,500
-Full Body Polishing — Rs.3,000
-Nail Extension — Rs.1,500
-Threading + Upper Lips — Rs.200
-*Total 12 services — Rs.16,800*
+Manicure + Pedicure — Rs.700
+Loreal Hair Spa — Rs.800
+Full Body Wax — Rs.2,000
+Full Body Polishing — Rs.2,000
+Nail Extension — Rs.600
+Threading + Upper Lips — Rs.50
+*Total 12 services — Rs.13,850*
 
 *Our Package: Rs.7,499 only*
-*You Save: Rs.9,301 — 55% OFF*
+*You Save: Rs.6,351 — 46% OFF*
 
-═══════════════════════════
-CLOSING PATHS
-═══════════════════════════
-
-PATH A — Ready to Book:
+PATH A CLOSING (ready to book):
 "A small advance will confirm your slot. Would you like to book it now?"
 If YES: "Garima ma'am aapko abhi QR code share karengi."
 
-PATH B — Hesitant / Wants to Think:
+PATH B CLOSING (hesitant / wants to visit):
 "Aap ek baar studio visit karein — Garima ma'am personally aapki skin check karengi. Koi pressure nahi.|Kab convenient rahega aapko?"
 If agrees: "Garima ma'am se timing confirm ho jaegi."
 
-PATH E — Needs Family / Husband Approval:
-("mummy se poochhna hai", "husband se baat karni hai", "ghar mein poochhna hai", "pehle bata dein")
-→ Don't push. Validate their process.
-→ "Bilkul, family ke saath decide karna sahi hai 😊 Aap unhe Garima ma'am ka kaam dikhayein — ek baar dekh lein: https://www.instagram.com/garimanagpalmua/"
+═══════════════════════════════════════
+COMBO PATH B — PRE-BRIDAL + BRIDAL MAKEUP
+═══════════════════════════════════════
+For customers who selected Pre-Bridal + Bridal Combo (option B).
+
+Share EXACTLY when they ask about combo or pricing:
+
+*Pre-Bridal + Bridal Makeup Combo* 💑
+
+Pre-Bridal Package (12 services) — Rs.7,499
+Bridal Makeup — Rs.11,000
+Individual total — *Rs.18,499*
+
+*Combo Price: Rs.16,500*
+*You Save: Rs.1,999* 🎉
+
+*Bridal Makeup includes:*
+✨ Waterproof & Long-Lasting
+✨ Full Coverage Finish
+✨ Soft Glam Velvety Matte with Glow
+✨ Lashes & Lenses
+✨ Draping + Hairstyle — Complimentary
+
+Then ask: "Aapki wedding kab hai?"
+Based on timing → give appropriate package timing advice.
+Closing: same as Path A/B above (advance to confirm slot, or studio visit).
+
+═══════════════════════════════════════
+HYDRA PATH C — HYDRA FACIAL PACKAGE
+═══════════════════════════════════════
+For customers who selected Hydra Package (option C).
+
+Share EXACTLY:
+
+*Hydra Facial Package* 💧
+
+Single Sitting — Rs.999
+*3-Sitting Package — Rs.2,799* ⭐
+
+Deep hydration, skin brightening, and nourishment.
+Best results with 3 sittings — 2-3 weeks apart.
+
+Then ask: "Aapki skin mein koi specific concern hai — dryness, dullness, ya kuch aur?"
+Based on their answer → personalize why Hydra is perfect for them.
+
+If they ask about which sitting to start with:
+→ "Single sitting se start kar sakte hain — feel karein, phir decide karein. 3-sitting mein zyada fark aata hai though 😊"
+
+Closing:
+→ "Kab aana convenient hoga aapko? Garima ma'am slot confirm karengi."
+
+═══════════════════════════════════════
+PATH D — OTHER BEAUTY SERVICES
+═══════════════════════════════════════
+For customers who selected Other Services (option D).
+
+First ask: "Zaroor! Kaunsi service ke baare mein jaanna chahti hain?"
+Then share price from the list below based on what they ask.
+
+FACIALS:
+Basic Facial (Aloevera/Fruit/Papaya) — Rs.549
+Sara D-Tan — Rs.499
+Lotus Natural Glow — Rs.799
+Lotus Anti-Tan — Rs.849
+Sara Banana Facial — Rs.849
+Lotus Hydra Facial — Rs.999
+Oxylife Pro — Rs.999
+Garima/FYC Facial — Rs.1,399
+Lotus Diamond Facial — Rs.1,199
+Premium Facial — Rs.1,599
+O3+ Vitamin Power Brightening — Rs.1,999
+O3+ Vitamin Bridal Glow — Rs.2,199
+
+HAIR CARE:
+Basic Hair Spa — Rs.499
+Loreal Hair Spa — Rs.799
+Hair Trimming — Rs.149
+Blow Dry — Rs.249
+Hair Cut — Rs.249
+Hair Wash + Dry — Rs.149
+Loreal Root Touchup — Rs.649
+Loreal Full Length — Rs.1,299
+Nanoplastia — Rs.2,499
+Keratin — Rs.1,499
+Global Color — Rs.2,499
+Global + Pre-lights — Rs.3,999
+
+CLEANUP:
+Aloevera/Fruit/Papaya — Rs.349
+Sara Banana — Rs.449
+Lotus Natural Glow — Rs.449
+Oxy Professional — Rs.549
+D-Tan — Rs.599
+
+WAXING:
+Brazilian Face Wax — Rs.299
+Honey Full Arms + Underarms — Rs.199
+Honey Full Legs — Rs.299
+Honey Full Body — Rs.1,199
+White Choco Full Arms + Underarms — Rs.299
+White Choco Full Legs — Rs.399
+White Choco Full Body — Rs.1,499
+Rica Full Arms + Underarms — Rs.399
+Rica Full Legs — Rs.599
+Rica Full Body — Rs.1,999
+
+BASIC CARING:
+Arms Polishing — Rs.349
+Full Body Polishing — Rs.1,999
+Manicure — Rs.349
+Pedicure — Rs.349
+Premium Pedicure — Rs.549
+Threading — Rs.30
+Upperlips — Rs.20
+Upperlips (Wax) — Rs.50
+Chin Wax — Rs.50
+Head Massage — Rs.249
+Basic Nail Cut & Cleaning — Rs.100
+
+BLEACH:
+Herbal Bleach — Rs.249
+Back Bleach — Rs.299
+Full Arms Bleach — Rs.299
+Oxylife Bleach — Rs.349
+D-Tan Bleach — Rs.349
+Full Body Bleach — Rs.1,999
+
+MAKEUP:
+Basic Makeup — Rs.1,500
+HD Party Makeup — Rs.2,000
+Cocktail Makeup — Rs.2,000
+Engagement Makeup — Rs.5,100
+Bridal Makeup — Rs.11,000
+HD Makeup (studio) — Rs.1,999
+Silicon HD Makeup — Rs.2,999
+
+NAIL SERVICES:
+Nail Extension — Rs.599
+Gel Nail Paint — Rs.349
+
+After sharing price, ALWAYS ask: "Aur koi service chahiye aapko?"
+Then gently mention: "Aur agar aap wedding ke liye plan kar rahi hain toh hamara pre-bridal package bhi bahut value deta hai 😊"
+
+═══════════════════════════════════════
+PATH E — FAMILY / HUSBAND APPROVAL NEEDED
+═══════════════════════════════════════
+Triggers: "mummy se poochhna hai", "husband se baat karni hai", "ghar mein poochhna hai", "pehle bata dein"
+
+→ Validate their process. Don't push.
+→ "Bilkul, family ke saath decide karna sahi hai 😊 Aap unhe Garima ma'am ka kaam dikhayein: https://www.instagram.com/garimanagpalmua/"
 → "Agar koi sawaal ho toh main yahan hoon. Kab tak baat ho jaegi unse?"
-→ If they come back: move to Path A or B naturally.
+→ If they return: move to Path A/B closing naturally.
 
-PATH F — Wedding 6+ Months Away (Nurture Mode):
-("abhi time hai", "6 mahine baad", "8 mahine", "next year", "shaadi abhi door hai")
-→ Do NOT push for booking. Enter nurture mode.
-→ "Abhi time hai — lekin skin ki care aaj se shuru karna bahut fayda deta hai 🌱"
-→ Share 1-2 personalized skincare tips based on their skin type.
-→ "Package ke liye hum 30-35 din pehle connect karenge. Tab tak main aapko tips deti rehti hoon — theek hai?"
-→ Goal: keep them warm, check in softly, convert closer to wedding date.
+═══════════════════════════════════════
+PATH F — WEDDING 2+ MONTHS AWAY OR NOT READY TO DECIDE
+═══════════════════════════════════════
+Triggers: "6 mahine baad", "8 mahine", "next year", "abhi time hai", "shaadi door hai", "sochna hai", "baad mein dekhte hain", "abhi nahi", "decide nahi kiya", "pehle sochu", "time lagega"
 
-PATH H — Only Wants a Single Service:
-("sirf facial chahiye", "sirf nail chahiye", "sirf wax", "ek hi service")
-→ Acknowledge their need first. Give the rate for that specific service.
-→ Then GENTLY introduce package value — don't force.
+→ Do NOT push for pre-bridal booking. Enter nurture mode.
+→ "Abhi time hai — bilkul sahi hai 😊 Lekin is beech mein ek kaam kar sakte hain —"
+→ SUGGEST HYDRA PACKAGE as a bridge:
 
-Individual Service Rates:
-- O3+ Facial (single) — Rs.2,500
-- Face Bleach / D-Tan (single) — Rs.350
-- Full Body Bleach — Rs.2,000
-- Full Body Wax — Rs.2,500
-- Full Body Polishing — Rs.3,000
-- L'Oreal Hair Spa — Rs.1,000
-- Manicure — Rs.500
-- Pedicure — Rs.500
-- Nail Extension — Rs.1,500
-- Threading + Upper Lips — Rs.200
+"Aap tab tak *Hydra Facial* try kar sakti hain — skin ko deeply hydrate aur glow deta hai.|*3-Sitting Package: Rs.2,799* — Results clearly dikhte hain skin mein 🌟|Iska fayda yeh hai ki jab pre-bridal start karein tab skin already prepared hoti hai. Aapki skin type kaisi hai?"
 
-→ After sharing rate: "Aur agar aap chahein toh humara package mein yeh service bhi included hai — total 12 services Rs.7,499 mein. Kaafi value milti hai 😊 Aapko aur koi service bhi chahiye hogi?"
+→ Benefits to share (1-2 lines only):
+  - Deep hydration — skin andar se nourished hoti hai
+  - Natural glow — bina makeup ke bhi skin fresh lagti hai
+  - Prepares skin for pre-bridal treatments — better results
+  - 3 sittings, 2-3 weeks apart — convenient schedule
 
-═══════════════════════════
+→ After Hydra interest: move to Hydra closing (studio visit for first sitting, Garima confirms slot)
+→ Keep nurturing for pre-bridal closer to wedding date (30-35 days before)
 
-DISTANCE: NEVER bring up location proactively. Only if customer asks first.
+═══════════════════════════════════════
+PACKAGE TIMING GUIDE
+═══════════════════════════════════════
+- 3+ months away: Start skincare now, package 30-35 days before wedding
+- 1-2 months: Perfect timing, 2-3 sittings
+- Within 40 days: 3 sittings possible, start ASAP
 
-METRO TIMES (only when asked):
+═══════════════════════════════════════
+SKINCARE TIPS (personalise based on skin type)
+═══════════════════════════════════════
+- Dry skin: Raw milk raat ko, besan+curd+haldi pack weekly
+- Oily skin: Rose water subah, avoid fried food
+- Normal skin: Warm water+lemon+honey subah, turmeric milk raat ko
+- Hair care: Coconut+castor oil hafte mein 2 baar
+- Dark circles: Almond oil raat ko aankho ke neeche
+
+═══════════════════════════════════════
+METRO TIMES (only when customer asks about distance)
+═══════════════════════════════════════
+DISTANCE: NEVER bring up proactively. Only if customer asks.
 - Dwarka: 15 min Pink Line
 - Connaught Place: 25 min Yellow Line
 - South Delhi: 35 min Yellow Line
@@ -421,22 +698,11 @@ STUDIO: Vikaspuri Delhi, near Janakpuri West Metro
 Maps: https://share.google/Wg5sfGr9GyYiNuzGB
 Instagram: https://www.instagram.com/garimanagpalmua/
 
-PACKAGE TIMING:
-- 3+ months: skincare start now, package 30-35 days before wedding
-- 1-2 months: perfect timing, 2-3 sittings possible
-- Within 40 days: 3 sittings possible, start ASAP
-
-SKINCARE TIPS (share 2 short, based on skin type + personalise):
-- Dry skin: Raw milk raat ko face pe lagayein, besan+curd+haldi pack weekly
-- Oily skin: Rose water subah, avoid fried food
-- Normal skin: Warm water+lemon+honey subah, turmeric milk raat ko
-- Hair: Coconut+castor oil hafte mein 2 baar
-- Dark circles: Almond oil raat ko aankho ke neeche
-
-SPECIAL RULES:
-- Don't understand a message → don't react, move forward with next question
+═══════════════════════════════════════
+SPECIAL RULES
+═══════════════════════════════════════
+- Don't understand a message → move forward with next logical question
 - Asked about bridal makeup → "Garima ma'am ka kaam yahan dekho: https://www.instagram.com/garimanagpalmua/"
-- Asked about combined package (makeup + pre-bridal) → "Bilkul! Garima ma'am se directly baat karein. Kaunsa time suit karta hai call ke liye?"
 - Wants to call/talk → "Aap Garima ma'am se baat kar sakti hain: +91 93542 60517"
 - Price negotiation → "Garima ma'am se baat karein"
 - Slot timing → "Garima ma'am confirm karengi"
@@ -462,7 +728,12 @@ async function getAIReply(phone, contextMsg) {
     : "";
   const res = await axios.post(
     "https://api.anthropic.com/v1/messages",
-    { model: "claude-sonnet-4-20250514", max_tokens: 300, system: SYSTEM_PROMPT + liveInstructions, messages: getHistory(phone) },
+    {
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 300,
+      system: SYSTEM_PROMPT + liveInstructions,
+      messages: getHistory(phone)
+    },
     { headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" } }
   );
   const reply = res.data.content?.[0]?.text || "Ek second.";
@@ -477,13 +748,34 @@ function parseWebhook(body) {
     if (messages?.length > 0) {
       const msg = messages[0];
       const contacts = body?.entry?.[0]?.changes?.[0]?.value?.contacts || [];
+      const phone = msg?.from || "";
+      const name = contacts[0]?.profile?.name || null;
+
+      // Handle interactive replies (button/list selections)
+      if (msg?.type === "interactive") {
+        const interactive = msg.interactive;
+        const selectedId    = interactive?.list_reply?.id    || interactive?.button_reply?.id    || "";
+        const selectedTitle = interactive?.list_reply?.title || interactive?.button_reply?.title || "";
+        return {
+          phone,
+          name,
+          text: selectedId || selectedTitle,
+          hasMedia: false,
+          isInteractive: true,
+          interactiveId: selectedId.toUpperCase(),
+        };
+      }
+
       return {
-        phone: msg?.from || "",
-        name: contacts[0]?.profile?.name || null,
+        phone,
+        name,
         text: msg?.text?.body || "",
         hasMedia: ["image","audio","video","document","sticker"].includes(msg?.type),
+        isInteractive: false,
       };
     }
+
+    // wapi.in.net alternate format
     const phone2 = body?.contact?.phone_number || "";
     if (phone2) {
       return {
@@ -491,6 +783,7 @@ function parseWebhook(body) {
         name: [body?.contact?.first_name, body?.contact?.last_name].filter(Boolean).join(" ") || null,
         text: body?.message?.body || "",
         hasMedia: !!body?.message?.media?.type,
+        isInteractive: false,
       };
     }
     return null;
@@ -499,26 +792,42 @@ function parseWebhook(body) {
 
 // ── WEBHOOK ENDPOINT ──────────────────────────────────────────
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200);
   try {
     const parsed = parseWebhook(req.body);
     if (!parsed?.phone) return;
-    const { phone, name, text, hasMedia } = parsed;
+    const { phone, name, text, hasMedia, isInteractive, interactiveId } = parsed;
     if (!text && !hasMedia) return;
     if (text && text.trim() === "") return;
 
     // Admin training number
     const cleanPhone = phone.replace(/\D/g, "");
     if (cleanPhone.endsWith("9560277217")) {
-      console.log(`👨‍💼 ADMIN INSTRUCTION: "${text}"`);
-      adminInstructions.push(text);
-      if (adminInstructions.length > 5) adminInstructions.shift();
-      await sendText(phone, `Understood. Instruction noted: "${text.substring(0, 80)}"`);
+      // Only activate trainer mode if message contains "Radhya"
+      if (!text.toLowerCase().includes("radhya")) {
+        console.log(`⏭️ Admin message ignored (no Radhya trigger): "${text.substring(0, 60)}"`);
+        res.sendStatus(200);
+        return; // Silently ignore — bot does not reply
+      }
+      // Radhya mentioned → trainer mode active
+      if (!adminTrainerActive) {
+        adminTrainerActive = true;
+        console.log(`🔓 Admin trainer mode ACTIVATED`);
+        await sendText(phone, `Trainer mode activated. Main sun rahi hoon Radhya ke roop mein. Instruction dijiye.`);
+        return;
+      }
+      // Already in trainer mode — accept instruction
+      const instruction = text.replace(/radhya[,.]?\s*/i, "").trim();
+      if (instruction) {
+        adminInstructions.push(instruction);
+        if (adminInstructions.length > 5) adminInstructions.shift();
+        console.log(`👨‍💼 ADMIN INSTRUCTION: "${instruction}"`);
+        await sendText(phone, `Samajh gayi. Instruction noted: "${instruction.substring(0, 80)}"`);
+      }
       return;
     }
 
-    const isNewLead    = isMetaLead(text);
-    const hasHistory   = conversations.has(phone) && getHistory(phone).length > 0;
+    const isNewLead  = isMetaLead(text);
+    const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
     const followupData = !hasHistory && !isNewLead ? await isInFollowupSent(phone) : null;
 
     if (!isNewLead && !hasHistory && !followupData) {
@@ -531,79 +840,91 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Update last message time (for nudge system) and reset nudge flag
+    // Update last message time, reset nudge
     lastMessageTime.set(phone, Date.now());
-    nudgeSent.set(phone, false); // Reset so nudge can fire again after next silence
+    nudgeSent.set(phone, false);
 
-    let contextMsg = text;
-    let leadInfo = { source: "Existing" };
-
+    // ── NEW LEAD: Send menu first ──────────────────────────────
     if (isNewLead) {
-      if (isAdDM(text)) {
-        const firstName = name ? name.split(" ")[0] : "";
-        console.log(`📱 AD DM LEAD: ${firstName || "unknown"} from ${phone}`);
-        leadInfo = { name: firstName, source: "Ad DM" };
-        contextMsg = `New lead from Instagram/Facebook ad DM.
-Customer name: ${firstName || "not given"}
-They sent: "${text}"
+      const lead = isAdDM(text) ? {} : extractLeadDetails(text);
+      const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
+      const source = isAdDM(text) ? "Ad DM" : "Meta Form";
 
-INSTRUCTION: Follow this EXACT flow:
-Step 1 — Greet warmly in polite English. Use their name if available. Ask for marriage date ONLY. Keep it short.
-After date → Step 2: Ask city/area.
-After location → Step 3: Curiosity hook (ask if they've tried any treatment before).
-Step 4: Share tips based on what they share. Step 5: Package info.
-First message: greet + ask marriage date only.
-NEVER use tum/tumhara. Use aap/aapka.`;
+      console.log(`🎯 NEW LEAD: ${firstName || "unknown"} | ${phone} | ${source}`);
+
+      await addActiveLead(phone, firstName, lead.wedding, lead.city, source, "🆕 New Lead", text);
+
+      // Send menu
+      await new Promise(r => setTimeout(r, 2000));
+      await sendMenuButtons(phone);
+      pendingMenuSelect.add(phone);
+
+      // Store lead info for when they select
+      conversations.set(phone, []);
+      addToHistory(phone, "assistant", MENU_TEXT_FALLBACK);
+      return;
+    }
+
+    // ── MENU SELECTION ─────────────────────────────────────────
+    if (pendingMenuSelect.has(phone)) {
+      const selection = isInteractive
+        ? (interactiveId || "")
+        : detectMenuSelection(text);
+
+      if (selection && ["A","B","C","D"].includes(selection)) {
+        pendingMenuSelect.delete(phone);
+        customerPath.set(phone, selection);
+
+        const existingHistory = getHistory(phone);
+        const storedLead = { name: "", wedding: "", city: "" };
+
+        console.log(`✅ PATH ${selection} selected by ${phone}`);
+
+        const pathLabels = {
+          "A": "Pre-Bridal Package",
+          "B": "Pre Bridal+Makeup",
+          "C": "Hydra Package",
+          "D": "Other Services",
+        };
+        await updateActiveLead(phone, {
+          status: `📂 ${pathLabels[selection]}`,
+          servicePath: pathLabels[selection],
+        });
+
+        const contextMsg = buildPathContext(selection, storedLead.name, storedLead.wedding, storedLead.city, text);
+        const reply = await getAIReply(phone, contextMsg);
+        const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
+
+        await new Promise(r => setTimeout(r, 3000));
+        for (let i = 0; i < parts.length; i++) {
+          if (i > 0) await new Promise(r => setTimeout(r, 1800));
+          await sendText(phone, parts[i]);
+          lastSentMessage.set(phone, parts[i]);
+        }
+        return;
       } else {
-        const lead = extractLeadDetails(text);
-        const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
-        console.log(`🎯 META FORM LEAD: ${lead.name} | ${lead.wedding} | ${lead.city}`);
-        leadInfo = { name: firstName, wedding: lead.wedding, city: lead.city, source: "Meta Form" };
-
-        const hasDate = lead.wedding && lead.wedding.toLowerCase() !== "not mentioned";
-        const hasCity = lead.city && lead.city.toLowerCase() !== "not mentioned";
-
-        let instruction = "";
-        if (hasDate && hasCity) instruction = `Customer details: wedding "${lead.wedding}", from "${lead.city}". Greet by first name in polite English, mention you received their enquiry, then share complete services list and ask if they have questions.`;
-        else if (hasDate) instruction = `Wedding "${lead.wedding}" known, city not. Greet by first name, share services list, ask which city/area.`;
-        else if (hasCity) instruction = `From "${lead.city}" but no date. Greet by first name, ask wedding date and area of ${lead.city}.`;
-        else instruction = `No date or city. Greet by first name in polite English, ask wedding date and location.`;
-
-        contextMsg = `New lead from Meta ad form:
-Name: ${firstName || "not given"}
-Wedding: ${lead.wedding || "not mentioned"}
-City: ${lead.city || "not mentioned"}
-${instruction}
-IMPORTANT: Polite English first message. NEVER use tum/tumhara.`;
+        // Couldn't detect selection — gently re-prompt
+        await sendText(phone, "Aap *A, B, C ya D* reply karein — main help kar sakti hoon 😊");
+        return;
       }
-    } else if (followupData) {
+    }
+
+    // ── FOLLOWUP LEAD ──────────────────────────────────────────
+    let contextMsg = text;
+    if (followupData) {
       const firstName = followupData.name ? followupData.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
       console.log(`📤 FOLLOWUP REPLY: ${firstName} (${phone})`);
-      leadInfo = {
-        name: firstName,
-        wedding: followupData.wedding,
-        city: followupData.city,
-        source: "Followup",
-      };
       await markFollowupReplied(phone);
-      contextMsg = `Customer replied to our outreach template: "${text}"
-Name: ${firstName || "not given"}
-Wedding: ${followupData.wedding || "not mentioned"}
-City: ${followupData.city || "not mentioned"}
-
-INSTRUCTION: Greet warmly${firstName ? " as " + firstName : ""} in polite English. Ask wedding date and area. Do NOT introduce yourself or mention brochure.`;
+      await addActiveLead(phone, firstName, followupData.wedding, followupData.city, "Followup", "🆕 New Lead", text);
+      contextMsg = `Customer replied to our outreach: "${text}"
+Name: ${firstName || "not given"}, Wedding: ${followupData.wedding || "not mentioned"}, City: ${followupData.city || "not mentioned"}
+INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT introduce yourself.`;
     }
 
-    // Add/Update Active Leads sheet BEFORE AI replies
-    if (isNewLead || followupData) {
-      await addActiveLead(phone, leadInfo.name, leadInfo.wedding, leadInfo.city, leadInfo.source, "🆕 New Lead", text);
-    }
-
-    // Get AI reply
+    // ── EXISTING CONVERSATION ──────────────────────────────────
     const reply = await getAIReply(phone, contextMsg);
     const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
 
-    // 5-6 second delay
     await new Promise(r => setTimeout(r, 5500));
 
     const lastSent = lastSentMessage.get(phone) || "";
@@ -614,12 +935,21 @@ INSTRUCTION: Greet warmly${firstName ? " as " + firstName : ""} in polite Englis
       lastSentMessage.set(phone, parts[i]);
     }
 
-    // Update sheet with status after reply
-    const status = detectStatus(reply, text);
-    await updateActiveLead(phone, { lastMsg: text, status });
+    // Extract wedding date from customer message and update sheet
+    const extractedDate = extractWeddingDateFromChat(text);
+    if (extractedDate) {
+      console.log(`📅 Wedding date extracted from chat: "${extractedDate}" for ${phone}`);
+      await updateActiveLead(phone, { wedding: extractedDate, lastMsg: text, status: detectStatus(reply, text) });
+    } else {
+      const status = detectStatus(reply, text);
+      await updateActiveLead(phone, { lastMsg: text, status });
+    }
+
+    res.sendStatus(200);
 
   } catch (err) {
     console.error("❌ Webhook error:", err?.response?.data || err.message);
+    res.sendStatus(200); // Always respond 200 to WhatsApp even on error
   }
 });
 
@@ -666,12 +996,13 @@ app.post("/admin/start", async (req, res) => {
 // ── HEALTH CHECK ──────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({
-    agent: "Beauty Box AI Agent v2.1",
+    agent: "Beauty Box AI Agent v2.2",
     claude: ANTHROPIC_API_KEY ? "OK" : "MISSING",
     wapi: WAPI_VENDOR_UID ? "OK" : "MISSING",
     sheets: sheetsClient ? "OK" : "DISABLED",
     admin: "/admin",
     activeConversations: conversations.size,
+    pendingMenuSelections: pendingMenuSelect.size,
     nudgeTracking: lastMessageTime.size,
   });
 });
@@ -713,7 +1044,7 @@ function scheduleDailyReport() {
 
 // ── STARTUP ───────────────────────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`\n🚀 Beauty Box Agent v2.1 on port ${PORT}`);
+  console.log(`\n🚀 Beauty Box Agent v2.2 on port ${PORT}`);
   console.log(`🔑 Claude:  ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`📱 WAPI:    ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
   console.log(`🔐 Token:   ${WAPI_TOKEN ? "OK" : "MISSING"}`);
@@ -723,5 +1054,6 @@ app.listen(PORT, async () => {
   scheduleDailyReport();
   scheduleNudgeCheck();
   console.log(`🔔 Nudge system: active (24h silence trigger)`);
+  console.log(`📋 Menu system: active (A/B/C/D paths)`);
   console.log(`✅ All systems ready\n`);
 });
