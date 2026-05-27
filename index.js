@@ -270,6 +270,27 @@ function extractWeddingDateFromChat(text) {
   return null;
 }
 
+// ── LOCATION EXTRACTOR FROM CHAT ─────────────────────────────
+function extractLocationFromChat(text) {
+  // Delhi areas and nearby cities
+  const locations = [
+    "Dwarka", "Noida", "Janakpuri", "Vikaspuri", "Uttam Nagar", "Rajouri Garden",
+    "Greater Noida", "Gurgaon", "Gurugram", "Faridabad", "Delhi", "West Delhi",
+    "South Delhi", "North Delhi", "East Delhi", "Central Delhi", "New Delhi",
+    "Connaught Place", "CP", "Shahdara", "Pitampura", "Defence Colony",
+    "Green Park", "Karol Bagh", "Rohini", "Malviya Nagar", "Sector", "Crossing",
+    "Sector 104", "Sector 105", "Sector 110", "Sector 126"
+  ];
+  
+  const lowerText = text.toLowerCase();
+  for (const location of locations) {
+    if (lowerText.includes(location.toLowerCase())) {
+      return location;
+    }
+  }
+  return null;
+}
+
 // ── CONVERSATION MEMORY ───────────────────────────────────────
 const conversations      = new Map();
 const lastSentMessage    = new Map();
@@ -875,11 +896,18 @@ app.post("/webhook", async (req, res) => {
       // Just update the sheet with the message, don't reply
       await addToHistory(phone, "user", text);
       const extractedDate = extractWeddingDateFromChat(text);
+      const extractedLocation = extractLocationFromChat(text);
+      
+      const updates = { lastMsg: text };
       if (extractedDate) {
-        await updateActiveLead(phone, { wedding: extractedDate, lastMsg: text });
-      } else {
-        await updateActiveLead(phone, { lastMsg: text });
+        updates.wedding = extractedDate;
+        console.log(`📅 Wedding date extracted: "${extractedDate}" for ${phone}`);
       }
+      if (extractedLocation) {
+        updates.city = extractedLocation;
+        console.log(`📍 Location extracted: "${extractedLocation}" for ${phone}`);
+      }
+      await updateActiveLead(phone, updates);
       res.sendStatus(200);
       return; // Exit — no bot reply
     }
@@ -975,9 +1003,19 @@ INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT i
 
     // Extract wedding date from customer message and update sheet
     const extractedDate = extractWeddingDateFromChat(text);
-    if (extractedDate) {
-      console.log(`📅 Wedding date extracted from chat: "${extractedDate}" for ${phone}`);
-      await updateActiveLead(phone, { wedding: extractedDate, lastMsg: text, status: detectStatus(reply, text) });
+    const extractedLocation = extractLocationFromChat(text);
+    
+    if (extractedDate || extractedLocation) {
+      const updates = { lastMsg: text, status: detectStatus(reply, text) };
+      if (extractedDate) {
+        updates.wedding = extractedDate;
+        console.log(`📅 Wedding date extracted: "${extractedDate}" for ${phone}`);
+      }
+      if (extractedLocation) {
+        updates.city = extractedLocation;
+        console.log(`📍 Location extracted: "${extractedLocation}" for ${phone}`);
+      }
+      await updateActiveLead(phone, updates);
     } else {
       const status = detectStatus(reply, text);
       await updateActiveLead(phone, { lastMsg: text, status });
