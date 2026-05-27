@@ -277,6 +277,7 @@ const lastMessageTime    = new Map();
 const nudgeSent          = new Map();
 const pendingMenuSelect  = new Set();  // Phones awaiting menu selection
 const customerPath       = new Map();  // Tracks A/B/C/D path per phone
+const manualOnlyChats    = new Set();  // Phones where bot is in MANUAL mode (no auto-reply)
 const adminInstructions  = [];
 let   adminTrainerActive = false;      // Trainer mode — activated only when admin says "Radhya"
 
@@ -416,8 +417,19 @@ const SYSTEM_PROMPT = `You are a team member at Beauty Box Makeup Studio by Gari
 
 You chat with customers who enquired about our services via Instagram/Facebook ads.
 
-CRITICAL RULES:
-1. MAX 1-2 lines per message. Never longer.
+CRITICAL CONVERSATION RULES (NEVER BREAK THESE):
+
+R1. CHECK HISTORY BEFORE ASKING: Before asking ANY question, check if customer already answered it in this conversation. If skin type was shared, city was shared, wedding date was shared — NEVER ask again. If you need to reference it, use what they told you.
+
+R2. NO OVER-ENTHUSIASTIC LANGUAGE: NEVER use phrases like "That's so exciting!", "Ohh amazing!", "Wow!", "How wonderful!" — these sound fake and salesy. Use neutral warm tone only. Max 1 emoji per 2-3 messages. No multiple exclamation marks.
+
+R3. ANSWER CUSTOMER'S QUESTION FIRST: If customer asks anything — location, price, home visit, timing, anything — answer THAT first. Then ask your next question. Never skip a customer's question.
+
+R4. HOME VISIT / AT-HOME SERVICES: If customer asks for home visit or home service — be honest and simple: "Hum sirf studio mein services dete hain — home visit available nahi hai. Aap studio visit karein, Garima ma'am personally dekhti hain." Never dodge this. If customer insists, note their number and say Garima ma'am will check if possible. Never push package after this.
+
+R5. ONE MESSAGE = ONE TASK. NO REPETITION: Each message has one clear purpose. Never repeat the same message or same question twice in a row. If a message was already sent, do NOT send it again even if customer doesn't reply to it. Wait for customer to respond. Only repeat something if customer specifically asks for it again.
+
+
 2. Your name is Radhya. You are a girl. Only reveal name if asked "what is your name". Never proactively.
 3. You are HUMAN. If asked "are you a bot/AI": "Nahi, main Radhya hoon — Beauty Box team se."
 4. Language: Mix of English, Hindi, Hinglish. First message in polite English. Then natural mix.
@@ -817,6 +829,19 @@ app.post("/webhook", async (req, res) => {
       }
       // Already in trainer mode — accept instruction
       const instruction = text.replace(/radhya[,.]?\s*/i, "").trim();
+      
+      // Check for enable auto command
+      if (instruction.toLowerCase().includes("enable auto")) {
+        const match = instruction.match(/(\d{10,})/);
+        if (match) {
+          const targetPhone = match[1];
+          manualOnlyChats.delete(targetPhone);
+          console.log(`🤖 AUTO MODE ENABLED for ${targetPhone}`);
+          await sendText(phone, `Auto mode enabled for ${targetPhone}. Bot will now respond to their messages.`);
+          return;
+        }
+      }
+
       if (instruction) {
         adminInstructions.push(instruction);
         if (adminInstructions.length > 5) adminInstructions.shift();
@@ -844,7 +869,20 @@ app.post("/webhook", async (req, res) => {
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
 
-    // ── NEW LEAD: Send menu first ──────────────────────────────
+    // ── CHECK IF MANUAL MODE ───────────────────────────────────
+    if (manualOnlyChats.has(phone)) {
+      console.log(`📝 MANUAL MODE: ${phone} — bot will not respond. Garima handles this manually.`);
+      // Just update the sheet with the message, don't reply
+      await addToHistory(phone, "user", text);
+      const extractedDate = extractWeddingDateFromChat(text);
+      if (extractedDate) {
+        await updateActiveLead(phone, { wedding: extractedDate, lastMsg: text });
+      } else {
+        await updateActiveLead(phone, { lastMsg: text });
+      }
+      res.sendStatus(200);
+      return; // Exit — no bot reply
+    }
     if (isNewLead) {
       const lead = isAdDM(text) ? {} : extractLeadDetails(text);
       const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
@@ -975,17 +1013,19 @@ app.post("/admin/start", async (req, res) => {
       await new Promise(r => setTimeout(r, 1000));
       await sendText(phone, openingMsg);
       addToHistory(phone, "assistant", openingMsg);
+      manualOnlyChats.add(phone); // Mark as manual mode — bot won't auto-reply
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
       await addActiveLead(phone, firstName, "", "", "Admin Initiated", "💬 Conversation Started", openingMsg);
-      console.log(`🚀 ADMIN: Message sent for ${phone}`);
+      console.log(`🚀 ADMIN: Message sent for ${phone} — MANUAL MODE active`);
     } else {
       conversations.set(phone, []);
       addToHistory(phone, "assistant", "Admin activated this number.");
+      manualOnlyChats.add(phone); // Mark as manual mode
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
       await addActiveLead(phone, firstName, "", "", "Admin Activated", "🆕 New Lead", "Manually activated");
-      console.log(`📋 ADMIN: Activated ${phone}`);
+      console.log(`📋 ADMIN: Activated ${phone} — MANUAL MODE active`);
     }
     res.json({ success: true });
   } catch (err) {
