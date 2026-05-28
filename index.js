@@ -81,7 +81,7 @@ async function getCustomerData(phone) {
       source: current[4] || "",
       status: current[5] || "",
       lastMessage: current[6] || "",
-      servicePath: current[9] || "", // Column J
+      servicePath: current[9] || "",
     };
   } catch (err) {
     console.error("getCustomerData error:", err.message);
@@ -132,7 +132,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
           status || "🆕 New Lead",
           (lastMsg || "").substring(0, 200),
           nowIST(), nowIST(),
-          "", // Service Path — filled when customer selects A/B/C/D
+          "",
         ]],
       },
     });
@@ -162,7 +162,7 @@ async function updateActiveLead(phone, updates) {
       (updates.lastMsg || current[6] || "").substring(0, 200),
       current[7] || nowIST(),
       nowIST(),
-      updates.servicePath || current[9] || "", // Column J — Service Path
+      updates.servicePath || current[9] || "",
     ];
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
@@ -284,13 +284,9 @@ function extractLeadDetails(text) {
 function extractWeddingDateFromChat(text) {
   const months = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec";
   const patterns = [
-    // "15th june 2025", "15 june", "15 june 25"
     new RegExp(`(\\d{1,2})\\s*(st|nd|rd|th)?\\s*(${months})\\s*(\\d{2,4})?`, "i"),
-    // "june 15", "june 15 2025"
     new RegExp(`(${months})\\s+(\\d{1,2})(\\s*(\\d{2,4}))?`, "i"),
-    // "15/6/2025", "15-6-25", "15/06"
     /(\d{1,2})[\/\-](\d{1,2})([\/\-](\d{2,4}))?/,
-    // Hindi style: "15 ko", "june mein", month name alone with context
     new RegExp(`(${months})\\s*(mein|ko|tak|me)?`, "i"),
   ];
   for (const pattern of patterns) {
@@ -302,7 +298,6 @@ function extractWeddingDateFromChat(text) {
 
 // ── LOCATION EXTRACTOR FROM CHAT ─────────────────────────────
 function extractLocationFromChat(text) {
-  // Delhi areas and nearby cities
   const locations = [
     "Dwarka", "Noida", "Janakpuri", "Vikaspuri", "Uttam Nagar", "Rajouri Garden",
     "Greater Noida", "Gurgaon", "Gurugram", "Faridabad", "Delhi", "West Delhi",
@@ -326,11 +321,11 @@ const conversations      = new Map();
 const lastSentMessage    = new Map();
 const lastMessageTime    = new Map();
 const nudgeSent          = new Map();
-const pendingMenuSelect  = new Set();  // Phones awaiting menu selection
-const customerPath       = new Map();  // Tracks A/B/C/D path per phone
-const manualOnlyChats    = new Set();  // Phones where bot is in MANUAL mode (no auto-reply)
+const pendingMenuSelect  = new Set();
+const customerPath       = new Map();
+const manualOnlyChats    = new Set();
 const adminInstructions  = [];
-let   adminTrainerActive = false;      // Trainer mode — activated only when admin says "Radhya"
+let   adminTrainerActive = false;
 
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
@@ -343,7 +338,6 @@ function addToHistory(phone, role, content) {
 }
 
 // ── MENU SYSTEM ───────────────────────────────────────────────
-// Button labels must be ≤20 chars for WhatsApp interactive list
 const MENU_BODY = `Welcome to *Beauty Box Makeup Studio* 💄
 
 Aap kaunsi service ke baare mein jaanna chahti hain? Ek option choose karein 👇`;
@@ -361,7 +355,6 @@ Reply *A, B, C ya D* karein 😊`;
 
 async function sendMenuButtons(toPhone) {
   try {
-    // Try interactive list message first
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
     const payload = {
       phone_number: toPhone,
@@ -388,12 +381,10 @@ async function sendMenuButtons(toPhone) {
     return res.data;
   } catch (err) {
     console.error(`⚠️ Interactive menu failed, using text fallback:`, err?.response?.data?.message || err.message);
-    // Text fallback — always works
     await sendText(toPhone, MENU_TEXT_FALLBACK);
   }
 }
 
-// Detect which menu option the customer selected
 function detectMenuSelection(text) {
   const t = (text || "").trim().toLowerCase();
   if (t === "a" || t === "1" || t.includes("pre-bridal") || t.includes("pre bridal")) return "A";
@@ -403,7 +394,6 @@ function detectMenuSelection(text) {
   return null;
 }
 
-// Build context message for AI based on selected path
 function buildPathContext(selectedPath, customerName, wedding, city, customerMsg) {
   const name = customerName || "not given";
   switch (selectedPath) {
@@ -425,8 +415,14 @@ Use polite English first then Hinglish.`;
       return `Customer selected: Hydra Facial Package.
 Name: ${name}
 Customer message: "${customerMsg}"
-INSTRUCTION: Follow HYDRA PATH C. Share hydra package details. Ask about skin concern to personalize.
-Use polite English first then Hinglish.`;
+INSTRUCTION: HYDRA PATH C - Natural Professional Flow:
+1. Greet warmly: "Perfect! Hydra Facial is amazing for skin hydration and glow."
+2. Ask about skin concern (open-ended): "What's your main skin concern — dryness, dullness, dark circles, or sensitivity?"
+3. When they answer, explain naturally why Hydra helps for THEIR concern (not generic)
+4. Share package info naturally: Single Rs.999 / 3-Sitting Rs.2,799
+5. Ask about convenience: "When would be convenient for you to start?"
+6. Close naturally: "Garima ma'am will confirm your slot."
+Key: NO scripted phrases. Sound like a real skin expert. Always end with question. Short messages (2-3 sentences).`;
 
     case "D":
       return `Customer selected: Other Beauty Services.
@@ -463,59 +459,54 @@ function scheduleNudgeCheck() {
   }, 30 * 60 * 1000);
 }
 
-// ── SYSTEM PROMPT ─────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are a team member at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi (near Janakpuri West Metro).
+// ── UPDATED SYSTEM PROMPT v2.4 - NATURAL PROFESSIONAL FEMALE TONE ──
+const SYSTEM_PROMPT = `You are Radhya, a professional skin specialist at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi (near Janakpuri West Metro).
 
 You chat with customers who enquired about our services via Instagram/Facebook ads.
 
 CRITICAL CONVERSATION RULES (NEVER BREAK THESE):
 
-R1. CHECK HISTORY BEFORE ASKING: Before asking ANY question, check if customer already answered it in this conversation. If skin type was shared, city was shared, wedding date was shared — NEVER ask again. If you need to reference it, use what they told you.
+R1. CHECK HISTORY BEFORE ASKING: Before asking ANY question, check if customer already answered it in this conversation. NEVER ask again.
 
-R2. NO OVER-ENTHUSIASTIC LANGUAGE: NEVER use phrases like "That's so exciting!", "Ohh amazing!", "Wow!", "How wonderful!" — these sound fake and salesy. Use neutral warm tone only. Max 1 emoji per 2-3 messages. No multiple exclamation marks.
+R2. NO OVER-ENTHUSIASTIC LANGUAGE: NEVER use fake phrases like "That's so exciting!", "Ohh amazing!", "Wow!" Use neutral warm tone. Max 1 emoji per 2-3 messages.
 
-R3. ANSWER CUSTOMER'S QUESTION FIRST: If customer asks anything — location, price, home visit, timing, anything — answer THAT first. Then ask your next question. Never skip a customer's question.
+R3. ANSWER CUSTOMER'S QUESTION FIRST: If customer asks anything — answer THAT first. Then ask your next question.
 
-R4. HOME VISIT / AT-HOME SERVICES: If customer asks for home visit or home service — be honest and simple: "Hum sirf studio mein services dete hain — home visit available nahi hai. Aap studio visit karein, Garima ma'am personally dekhti hain." Never dodge this. If customer insists, note their number and say Garima ma'am will check if possible. Never push package after this.
+R4. HOME VISIT: If customer asks for home visit, be honest: "Hum sirf studio mein services dete hain — home visit available nahi hai. Aap studio visit karein, Garima ma'am personally dekhti hain."
 
-R5. ONE MESSAGE = ONE TASK. NO REPETITION: Each message has one clear purpose. Never repeat the same message or same question twice in a row. If a message was already sent, do NOT send it again even if customer doesn't reply to it. Wait for customer to respond. Only repeat something if customer specifically asks for it again.
+R5. ONE MESSAGE = ONE TASK. NO REPETITION: Each message has one purpose. Never repeat the same question twice.
 
+TONE & PERSONALITY (v2.4 UPDATE):
+- Warm, professional, conversational (like talking to a friend who's an expert)
+- NO scripted phrases: "Bilkul samjha", "Main samjhti hoon", "Maine dekha"
+- Natural observations: "That explains a lot", "Here's what I notice", "Got it"
+- Show knowledge naturally without forcing it
+- Always end with a question to keep dialogue flowing
+- Short messages (2-3 sentences typical)
+- No pressure tactics - build trust through honesty
+- Acknowledge customer's concerns genuinely
 
-2. Your name is Radhya. You are a girl. Only reveal name if asked "what is your name". Never proactively.
-3. You are HUMAN. If asked "are you a bot/AI": "Nahi, main Radhya hoon — Beauty Box team se."
-4. Language: Mix of English, Hindi, Hinglish. First message in polite English. Then natural mix.
-5. ALWAYS use "aap/aapka/aapki/aapko" — NEVER "tum/tumhara/tumhari".
-6. Always end with ONE short question.
-7. Use | to send multiple messages. Max 3 at a time.
-8. Use emojis sparingly — max 1 per 2-3 messages.
-9. Do NOT introduce yourself unless directly asked.
-
-ENRICHMENT RULES (always apply naturally):
-E1. EMOTIONAL MIRROR: Occasionally mirror wedding prep excitement/stress. "Shaadi ki tayaari mein itna kuch hota hai na — skin ka dhyan rakhna sabse zaroori hota hai 😊"
+ENRICHMENT RULES:
+E1. EMOTIONAL MIRROR: Occasionally mirror wedding excitement. "Shaadi ki tayaari mein itna kuch hota hai na — skin ka dhyan rakhnaa sabse zaroori hota hai 😊"
 E2. OPEN-ENDED QUESTIONS: Never yes/no. "Aapki skin subah uthke kaisi lagti hai — tight/dry, oily, ya mixed?"
-E3. CURIOSITY HOOK (pre-bridal leads): Before package pitch, ask "Aapne pehle kabhi koi bridal facial ya skin treatment try ki hai?"
-E4. SOFT REPLY HANDLING: "ok", "hmm", "thik hai", "haan", "accha" → treat as green light, move forward gently.
-E5. EXCITEMENT ANGLE (once per convo): "Shaadi ke din aapki skin ekdum glow kare — yahi toh hamara kaam hai 🌸"
-E6. PERSONALISED TIPS: Tie tips to what they told you — skin type, city, timeline.
+E3. CURIOSITY HOOK (pre-bridal): "Aapne pehle kabhi koi bridal facial ya skin treatment try ki hai?"
+E4. SOFT REPLY HANDLING: "ok", "hmm", "thik hai" → treat as green light, move forward gently.
+E5. EXCITEMENT ANGLE: "Shaadi ke din aapki skin ekdum glow kare — yahi toh hamara kaam hai 🌸"
+E6. PERSONALISED TIPS: Tie tips to what they told you.
 
 ═══════════════════════════════════════
 PATH A — PRE-BRIDAL PACKAGE
 ═══════════════════════════════════════
-For customers who selected Pre-Bridal Package (option A).
-
 CONVERSATION FLOW:
-Step 1: Greet by first name → ask wedding date + city
-Step 2: Ask skin type (open-ended per E2)
-Step 3: CURIOSITY HOOK — "Aapne pehle koi treatment try ki hai?" (E3)
-Step 4: Share 2-3 personalised tips based on skin type
-Step 5: Share package info
-Step 6: Close via Path A (advance) or Path B (studio visit)
+1. Greet by first name → ask wedding date + city
+2. Ask skin type (open-ended)
+3. CURIOSITY HOOK — "Aapne pehle koi treatment try ki hai?"
+4. Share 2-3 personalised tips based on skin type
+5. Share package info
+6. Close via Path A (advance) or Path B (studio visit)
 
-WHEN ASKED about services ("kya kya hoga", "services", "kya milega"):
-Send EXACTLY:
-
+WHEN ASKED about services:
 *Pre-Bridal Package — 12 Services in 3 Sittings*
-
 *1. O3+ Facial* — 2 sittings
 *2. Bleach / D-Tan* — 2 sittings
 *3. Full Body Bleach*
@@ -528,14 +519,10 @@ Send EXACTLY:
 *10. Face Bleach*
 *11. Threading & Upper Lips*
 *12. O3+ Facial* — repeat in 3rd sitting
-
 All in just *Rs.7,499* — limited slots only.
 
-WHEN ASKED about price ("kitna hai", "price", "cost"):
-Send EXACTLY:
-
+WHEN ASKED about price:
 *Why Pay More? See the Difference*
-
 O3+ Facial x2 — Rs.5,000
 Bleach/D-Tan x2 — Rs.700
 Full Body Bleach — Rs.2,000
@@ -546,7 +533,6 @@ Full Body Polishing — Rs.2,000
 Nail Extension — Rs.600
 Threading + Upper Lips — Rs.50
 *Total 12 services — Rs.13,850*
-
 *Our Package: Rs.7,499 only*
 *You Save: Rs.6,351 — 46% OFF*
 
@@ -554,26 +540,18 @@ PATH A CLOSING (ready to book):
 "A small advance will confirm your slot. Would you like to book it now?"
 If YES: "Garima ma'am aapko abhi QR code share karengi."
 
-PATH B CLOSING (hesitant / wants to visit):
+PATH B CLOSING (hesitant):
 "Aap ek baar studio visit karein — Garima ma'am personally aapki skin check karengi. Koi pressure nahi.|Kab convenient rahega aapko?"
-If agrees: "Garima ma'am se timing confirm ho jaegi."
 
 ═══════════════════════════════════════
 COMBO PATH B — PRE-BRIDAL + BRIDAL MAKEUP
 ═══════════════════════════════════════
-For customers who selected Pre-Bridal + Bridal Combo (option B).
-
-Share EXACTLY when they ask about combo or pricing:
-
 *Pre-Bridal + Bridal Makeup Combo* 💑
-
 Pre-Bridal Package (12 services) — Rs.7,499
 Bridal Makeup — Rs.11,000
 Individual total — *Rs.18,499*
-
 *Combo Price: Rs.16,500*
 *You Save: Rs.1,999* 🎉
-
 *Bridal Makeup includes:*
 ✨ Waterproof & Long-Lasting
 ✨ Full Coverage Finish
@@ -582,40 +560,64 @@ Individual total — *Rs.18,499*
 ✨ Draping + Hairstyle — Complimentary
 
 Then ask: "Aapki wedding kab hai?"
-Based on timing → give appropriate package timing advice.
-Closing: same as Path A/B above (advance to confirm slot, or studio visit).
+Based on timing → give appropriate advice.
+Closing: same as Path A/B above.
 
 ═══════════════════════════════════════
-HYDRA PATH C — HYDRA FACIAL PACKAGE
+HYDRA PATH C — HYDRA FACIAL PACKAGE (v2.4 UPDATED)
 ═══════════════════════════════════════
-For customers who selected Hydra Package (option C).
+NATURAL PROFESSIONAL CONVERSATION FLOW:
 
-Share EXACTLY:
+Step 1: GREET & INTEREST CHECK
+"So dark circles are actually quite common, but the good news is they're completely reversible."
+"What's your main skin concern — dryness, dullness, dark circles, or something else?"
 
-*Hydra Facial Package* 💧
+Step 2: UNDERSTAND & VALIDATE
+Based on their answer, explain naturally WHY Hydra helps for THEIR specific concern:
+- Dry skin: "Dry skin loses moisture faster. Hydra replenishes that deep hydration."
+- Dull skin: "Dullness means your skin needs brightening + nourishment. That's exactly what Hydra does."
+- Dark circles: "Dark circles are usually pigmentation + thin skin. Hydra hydrates AND brightens that area."
+- Dark spots: "Pigmentation fades when skin is properly hydrated. Hydra does that naturally."
 
-Single Sitting — Rs.999
-*3-Sitting Package — Rs.2,799* ⭐
+Step 3: SHARE PACKAGE (NATURALLY)
+"So here's our Hydra Facial Package — single sitting is Rs.999, but 3-sitting package is Rs.2,799 and gives much better results."
+"The 3 sittings are 2-3 weeks apart, so you'll see real transformation."
 
-Deep hydration, skin brightening, and nourishment.
-Best results with 3 sittings — 2-3 weeks apart.
+Step 4: ASK ABOUT TIMELINE
+"When would be convenient for you to start?"
+OR
+"How much time do you have? That helps me suggest the best approach."
 
-Then ask: "Aapki skin mein koi specific concern hai — dryness, dullness, ya kuch aur?"
-Based on their answer → personalize why Hydra is perfect for them.
+Step 5: CLOSE NATURALLY
+If they're ready: "Perfect! Garima ma'am will confirm your slot."
+If hesitant: "You can start with a single sitting to feel the difference, then decide if you want the full package."
 
-If they ask about which sitting to start with:
-→ "Single sitting se start kar sakte hain — feel karein, phir decide karein. 3-sitting mein zyada fark aata hai though 😊"
+KEY HYDRA POINTS:
+- Single: Rs.999 (quick feel)
+- 3-Sitting: Rs.2,799 ⭐ (recommended, 45% better value)
+- Timing: 2-3 weeks apart
+- Results: 60-70% improvement typically
+- No downtime, no complications
+- Safe for all skin types
 
-Closing:
-→ "Kab aana convenient hoga aapko? Garima ma'am slot confirm karengi."
+HYDRA TIPS (share when relevant):
+- Deep hydration restores skin barrier
+- Brightening makes dark areas fade gradually
+- Results are natural, not dramatic overnight
+- Home care (moisturizing + sunscreen) keeps results going
+
+DO NOT:
+❌ Use "Hydra bilkul perfect hai"
+❌ Use "Maine dekha..."
+❌ Push for booking aggressively
+❌ Promise 100% results
+❌ Use exclamation marks excessively
 
 ═══════════════════════════════════════
 PATH D — OTHER BEAUTY SERVICES
 ═══════════════════════════════════════
-For customers who selected Other Services (option D).
-
 First ask: "Zaroor! Kaunsi service ke baare mein jaanna chahti hain?"
-Then share price from the list below based on what they ask.
+Then share price from list below based on their question.
 
 FACIALS:
 Basic Facial (Aloevera/Fruit/Papaya) — Rs.549
@@ -699,37 +701,25 @@ Nail Extension — Rs.599
 Gel Nail Paint — Rs.349
 
 After sharing price, ALWAYS ask: "Aur koi service chahiye aapko?"
-Then gently mention: "Aur agar aap wedding ke liye plan kar rahi hain toh hamara pre-bridal package bhi bahut value deta hai 😊"
+Then mention: "Aur agar aap wedding ke liye plan kar rahi hain toh hamara pre-bridal package bhi bahut value deta hai 😊"
 
 ═══════════════════════════════════════
 PATH E — FAMILY / HUSBAND APPROVAL NEEDED
 ═══════════════════════════════════════
-Triggers: "mummy se poochhna hai", "husband se baat karni hai", "ghar mein poochhna hai", "pehle bata dein"
+Triggers: "mummy se poochhna hai", "husband se baat karni hai", "ghar mein poochhna hai"
 
 → Validate their process. Don't push.
 → "Bilkul, family ke saath decide karna sahi hai 😊 Aap unhe Garima ma'am ka kaam dikhayein: https://www.instagram.com/garimanagpalmua/"
 → "Agar koi sawaal ho toh main yahan hoon. Kab tak baat ho jaegi unse?"
-→ If they return: move to Path A/B closing naturally.
 
 ═══════════════════════════════════════
-PATH F — WEDDING 2+ MONTHS AWAY OR NOT READY TO DECIDE
+PATH F — WEDDING 2+ MONTHS AWAY / NOT READY
 ═══════════════════════════════════════
-Triggers: "6 mahine baad", "8 mahine", "next year", "abhi time hai", "shaadi door hai", "sochna hai", "baad mein dekhte hain", "abhi nahi", "decide nahi kiya", "pehle sochu", "time lagega"
+Triggers: "6 mahine baad", "8 mahine", "next year", "abhi time hai", "wedding door hai"
 
-→ Do NOT push for pre-bridal booking. Enter nurture mode.
-→ "Abhi time hai — bilkul sahi hai 😊 Lekin is beech mein ek kaam kar sakte hain —"
-→ SUGGEST HYDRA PACKAGE as a bridge:
-
-"Aap tab tak *Hydra Facial* try kar sakti hain — skin ko deeply hydrate aur glow deta hai.|*3-Sitting Package: Rs.2,799* — Results clearly dikhte hain skin mein 🌟|Iska fayda yeh hai ki jab pre-bridal start karein tab skin already prepared hoti hai. Aapki skin type kaisi hai?"
-
-→ Benefits to share (1-2 lines only):
-  - Deep hydration — skin andar se nourished hoti hai
-  - Natural glow — bina makeup ke bhi skin fresh lagti hai
-  - Prepares skin for pre-bridal treatments — better results
-  - 3 sittings, 2-3 weeks apart — convenient schedule
-
-→ After Hydra interest: move to Hydra closing (studio visit for first sitting, Garima confirms slot)
-→ Keep nurturing for pre-bridal closer to wedding date (30-35 days before)
+→ Do NOT push pre-bridal. Enter nurture mode.
+→ SUGGEST HYDRA as bridge:
+"Abhi time hai — bilkul sahi hai 😊 Lekin is beech mein ek kaam kar sakte hain — *Hydra Facial* try kar sakti hain. Skin ko deeply hydrate aur glow deta hai.|*3-Sitting Package: Rs.2,799* — Results clearly dikhte hain skin mein 🌟"
 
 ═══════════════════════════════════════
 PACKAGE TIMING GUIDE
@@ -739,7 +729,7 @@ PACKAGE TIMING GUIDE
 - Within 40 days: 3 sittings possible, start ASAP
 
 ═══════════════════════════════════════
-SKINCARE TIPS (personalise based on skin type)
+SKINCARE TIPS
 ═══════════════════════════════════════
 - Dry skin: Raw milk raat ko, besan+curd+haldi pack weekly
 - Oily skin: Rose water subah, avoid fried food
@@ -748,25 +738,23 @@ SKINCARE TIPS (personalise based on skin type)
 - Dark circles: Almond oil raat ko aankho ke neeche
 
 ═══════════════════════════════════════
-METRO TIMES (only when customer asks about distance)
+METRO TIMES (only when customer asks)
 ═══════════════════════════════════════
-DISTANCE: NEVER bring up proactively. Only if customer asks.
 - Dwarka: 15 min Pink Line
-- Connaught Place: 25 min Yellow Line
+- CP: 25 min Yellow Line
 - South Delhi: 35 min Yellow Line
-- Shahdara: 53 min Pink Line via Pitampura
-- Noida: 50 min Blue→Rajiv Chowk→Yellow
-
-STUDIO: Vikaspuri Delhi, near Janakpuri West Metro
+- Shahdara: 53 min Pink Line
+- Noida: 50 min Blue→Rajiv→Yellow
+STUDIO: Vikaspuri, near Janakpuri West Metro
 Maps: https://share.google/Wg5sfGr9GyYiNuzGB
 Instagram: https://www.instagram.com/garimanagpalmua/
 
 ═══════════════════════════════════════
 SPECIAL RULES
 ═══════════════════════════════════════
-- Don't understand a message → move forward with next logical question
-- Asked about bridal makeup → "Garima ma'am ka kaam yahan dekho: https://www.instagram.com/garimanagpalmua/"
-- Wants to call/talk → "Aap Garima ma'am se baat kar sakti hain: +91 93542 60517"
+- Don't understand → move with next logical question
+- Bridal makeup question → "https://www.instagram.com/garimanagpalmua/"
+- Want to call → "Garima ma'am: +91 93542 60517"
 - Price negotiation → "Garima ma'am se baat karein"
 - Slot timing → "Garima ma'am confirm karengi"
 - QR code → NEVER send`;
@@ -814,7 +802,6 @@ function parseWebhook(body) {
       const phone = msg?.from || "";
       const name = contacts[0]?.profile?.name || null;
 
-      // Handle interactive replies (button/list selections)
       if (msg?.type === "interactive") {
         const interactive = msg.interactive;
         const selectedId    = interactive?.list_reply?.id    || interactive?.button_reply?.id    || "";
@@ -838,7 +825,6 @@ function parseWebhook(body) {
       };
     }
 
-    // wapi.in.net alternate format
     const phone2 = body?.contact?.phone_number || "";
     if (phone2) {
       return {
@@ -862,26 +848,21 @@ app.post("/webhook", async (req, res) => {
     if (!text && !hasMedia) return;
     if (text && text.trim() === "") return;
 
-    // Admin training number
     const cleanPhone = phone.replace(/\D/g, "");
     if (cleanPhone.endsWith("9560277217")) {
-      // Only activate trainer mode if message contains "Radhya"
       if (!text.toLowerCase().includes("radhya")) {
         console.log(`⏭️ Admin message ignored (no Radhya trigger): "${text.substring(0, 60)}"`);
         res.sendStatus(200);
-        return; // Silently ignore — bot does not reply
+        return;
       }
-      // Radhya mentioned → trainer mode active
       if (!adminTrainerActive) {
         adminTrainerActive = true;
         console.log(`🔓 Admin trainer mode ACTIVATED`);
         await sendText(phone, `Trainer mode activated. Main sun rahi hoon Radhya ke roop mein. Instruction dijiye.`);
         return;
       }
-      // Already in trainer mode — accept instruction
       const instruction = text.replace(/radhya[,.]?\s*/i, "").trim();
       
-      // Check for enable auto command
       if (instruction.toLowerCase().includes("enable auto")) {
         const match = instruction.match(/(\d{10,})/);
         if (match) {
@@ -916,14 +897,11 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Update last message time, reset nudge
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
 
-    // ── CHECK IF MANUAL MODE ───────────────────────────────────
     if (manualOnlyChats.has(phone)) {
-      console.log(`📝 MANUAL MODE: ${phone} — bot will not respond. Garima handles this manually.`);
-      // Just update the sheet with the message, don't reply
+      console.log(`📝 MANUAL MODE: ${phone} — bot will not respond.`);
       await addToHistory(phone, "user", text);
       const extractedDate = extractWeddingDateFromChat(text);
       const extractedLocation = extractLocationFromChat(text);
@@ -939,7 +917,7 @@ app.post("/webhook", async (req, res) => {
       }
       await updateActiveLead(phone, updates);
       res.sendStatus(200);
-      return; // Exit — no bot reply
+      return;
     }
     if (isNewLead) {
       const lead = isAdDM(text) ? {} : extractLeadDetails(text);
@@ -950,18 +928,15 @@ app.post("/webhook", async (req, res) => {
 
       await addActiveLead(phone, firstName, lead.wedding, lead.city, source, "🆕 New Lead", text);
 
-      // Send menu
       await new Promise(r => setTimeout(r, 2000));
       await sendMenuButtons(phone);
       pendingMenuSelect.add(phone);
 
-      // Store lead info for when they select
       conversations.set(phone, []);
       addToHistory(phone, "assistant", MENU_TEXT_FALLBACK);
       return;
     }
 
-    // ── MENU SELECTION ─────────────────────────────────────────
     if (pendingMenuSelect.has(phone)) {
       const selection = isInteractive
         ? (interactiveId || "")
@@ -999,13 +974,11 @@ app.post("/webhook", async (req, res) => {
         }
         return;
       } else {
-        // Couldn't detect selection — gently re-prompt
         await sendText(phone, "Aap *A, B, C ya D* reply karein — main help kar sakti hoon 😊");
         return;
       }
     }
 
-    // ── FOLLOWUP LEAD ──────────────────────────────────────────
     let contextMsg = text;
     if (followupData) {
       const firstName = followupData.name ? followupData.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
@@ -1017,7 +990,6 @@ Name: ${firstName || "not given"}, Wedding: ${followupData.wedding || "not menti
 INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT introduce yourself.`;
     }
 
-    // ── EXISTING CONVERSATION ──────────────────────────────────
     const reply = await getAIReply(phone, contextMsg);
     const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
 
@@ -1031,7 +1003,6 @@ INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT i
       lastSentMessage.set(phone, parts[i]);
     }
 
-    // Extract wedding date from customer message and update sheet
     const extractedDate = extractWeddingDateFromChat(text);
     const extractedLocation = extractLocationFromChat(text);
     
@@ -1055,7 +1026,7 @@ INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT i
 
   } catch (err) {
     console.error("❌ Webhook error:", err?.response?.data || err.message);
-    res.sendStatus(200); // Always respond 200 to WhatsApp even on error
+    res.sendStatus(200);
   }
 });
 
@@ -1064,8 +1035,8 @@ app.get("/admin", (req, res) => {
   const defaultMsg = `We have received your inquiry on our advertisement for Pre-Bridal Package. Please let us know your marriage date and location.\n\nRegards,\nBeauty Box Makeup Studio by Garima Nagpal`;
   res.setHeader("Content-Type", "text/html");
   res.send(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Beauty Box Admin</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}button.secondary{background:#555;margin-top:8px}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="container"><div class="card"><h2>New Chat</h2><p>Send opening message and start bot</p><label>Phone number (with country code, no +)</label><input id="ph" type="tel" placeholder="919999999999"><label>Customer name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message <span style="font-weight:400;color:#aaa">(editable)</span></label><textarea id="omsg">${defaultMsg}</textarea><div class="hint">Edit before sending. Bot takes over after customer replies.</div><label>Admin key</label><input id="ky" type="password" placeholder="Enter admin key"><button onclick="goNew(true)">Send Message &amp; Activate Bot</button><button class="secondary" onclick="goNew(false)">Activate Bot Only</button><div class="msg" id="msg1"></div><small>Bot handles all replies automatically.</small></div><div class="card"><h2>Reactivate Customer</h2><p>Load customer history & continue conversation</p><label>Customer phone (with country code, no +)</label><input id="rph" type="tel" placeholder="919999999999"><label>Follow-up message <span style="font-weight:400;color:#aaa">(optional)</span></label><textarea id="rmsg" placeholder="Warm message to re-engage customer...">Hi! Bas check kar rahi thi — kaise chal rahi hai shaadi ki tayaari?</textarea><div class="hint">Leave blank to just reactivate without sending message.</div><label>Admin key</label><input id="rky" type="password" placeholder="Enter admin key"><button onclick="goReactivate()">Reactivate &amp; Continue</button><div class="msg" id="msg2"></div><small>Bot will read their history and resume conversation.</small></div></div><script>async function goNew(sendMsg){const ph=document.getElementById('ph').value.trim();const nm=document.getElementById('nm').value.trim();const ky=document.getElementById('ky').value.trim();const om=document.getElementById('omsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:sendMsg?om:'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh(sendMsg?'Sent to '+ph+'. Bot activated!':'Bot activated for '+ph,'ok','msg1');document.getElementById('ph').value='';document.getElementById('nm').value='';}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}async function goReactivate(){const ph=document.getElementById('rph').value.trim();const ky=document.getElementById('rky').value.trim();const rmsg=document.getElementById('rmsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg2');return;}try{const r=await fetch('/admin/reactivate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,key:ky,message:rmsg})});const d=await r.json();if(d.success){sh('✅ '+d.message,'ok','msg2');document.getElementById('rph').value='';document.getElementById('rmsg').value='';}else sh(d.error||'Error','err','msg2');}catch(e){sh('Network error','err','msg2');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}document.getElementById('ky').addEventListener('keydown',e=>{if(e.key==='Enter')goNew(true);});document.getElementById('rky').addEventListener('keydown',e=>{if(e.key==='Enter')goReactivate();});</script></body></html>`);
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Beauty Box Admin v2.4</title>
+<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}button.secondary{background:#555;margin-top:8px}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="container"><div class="card"><h2>New Chat</h2><p>Send opening message and start bot</p><label>Phone number (with country code, no +)</label><input id="ph" type="tel" placeholder="919999999999"><label>Customer name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message <span style="font-weight:400;color:#aaa">(editable)</span></label><textarea id="omsg">${defaultMsg}</textarea><div class="hint">Edit before sending. Bot takes over after customer replies.</div><label>Admin key</label><input id="ky" type="password" placeholder="Enter admin key"><button onclick="goNew(true)">Send Message &amp; Activate Bot</button><button class="secondary" onclick="goNew(false)">Activate Bot Only</button><div class="msg" id="msg1"></div><small>Bot handles all replies automatically (v2.4 - Natural Female Tone)</small></div><div class="card"><h2>Reactivate Customer</h2><p>Load customer history & continue conversation</p><label>Customer phone (with country code, no +)</label><input id="rph" type="tel" placeholder="919999999999"><label>Follow-up message <span style="font-weight:400;color:#aaa">(optional)</span></label><textarea id="rmsg" placeholder="Warm message to re-engage customer...">Got it, dry skin. That explains a lot, actually. The issue with dry skin under the eyes is that the area loses moisture much faster than other parts of your face. How long have you been dealing with the dark circles?</textarea><div class="hint">Leave blank to just reactivate without sending message.</div><label>Admin key</label><input id="rky" type="password" placeholder="Enter admin key"><button onclick="goReactivate()">Reactivate &amp; Continue</button><div class="msg" id="msg2"></div><small>Bot will read their history and resume conversation (v2.4 - Professional Tone)</small></div></div><script>async function goNew(sendMsg){const ph=document.getElementById('ph').value.trim();const nm=document.getElementById('nm').value.trim();const ky=document.getElementById('ky').value.trim();const om=document.getElementById('omsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:sendMsg?om:'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh(sendMsg?'Sent to '+ph+'. Bot activated!':'Bot activated for '+ph,'ok','msg1');document.getElementById('ph').value='';document.getElementById('nm').value='';}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}async function goReactivate(){const ph=document.getElementById('rph').value.trim();const ky=document.getElementById('rky').value.trim();const rmsg=document.getElementById('rmsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg2');return;}try{const r=await fetch('/admin/reactivate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,key:ky,message:rmsg})});const d=await r.json();if(d.success){sh('✅ '+d.message,'ok','msg2');document.getElementById('rph').value='';document.getElementById('rmsg').value='';}else sh(d.error||'Error','err','msg2');}catch(e){sh('Network error','err','msg2');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}document.getElementById('ky').addEventListener('keydown',e=>{if(e.key==='Enter')goNew(true);});document.getElementById('rky').addEventListener('keydown',e=>{if(e.key==='Enter')goReactivate();});</script></body></html>`);
 });
 
 app.post("/admin/start", async (req, res) => {
@@ -1081,7 +1052,7 @@ app.post("/admin/start", async (req, res) => {
       await new Promise(r => setTimeout(r, 1000));
       await sendText(phone, openingMsg);
       addToHistory(phone, "assistant", openingMsg);
-      manualOnlyChats.add(phone); // Mark as manual mode — bot won't auto-reply
+      manualOnlyChats.add(phone);
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
       await addActiveLead(phone, firstName, "", "", "Admin Initiated", "💬 Conversation Started", openingMsg);
@@ -1089,7 +1060,7 @@ app.post("/admin/start", async (req, res) => {
     } else {
       conversations.set(phone, []);
       addToHistory(phone, "assistant", "Admin activated this number.");
-      manualOnlyChats.add(phone); // Mark as manual mode
+      manualOnlyChats.add(phone);
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
       await addActiveLead(phone, firstName, "", "", "Admin Activated", "🆕 New Lead", "Manually activated");
@@ -1107,7 +1078,6 @@ app.post("/admin/reactivate", async (req, res) => {
   if (!phone) return res.json({ success: false, error: "Phone number required" });
   
   try {
-    // Get customer data from Active Leads sheet
     const customerData = await getCustomerData(phone);
     if (!customerData) {
       return res.json({ success: false, error: "Customer not found in records" });
@@ -1118,23 +1088,18 @@ app.post("/admin/reactivate", async (req, res) => {
 
     console.log(`📞 REACTIVATING: ${firstName} (${phone}) | Path: ${servicePath}`);
 
-    // Initialize conversation history (simulate resume)
     if (!conversations.has(phone)) {
       conversations.set(phone, []);
     }
     const history = getHistory(phone);
     
-    // Add context about reactivation
     addToHistory(phone, "system", `[REACTIVATED] Previous path: ${servicePath}. Last status: ${customerData.status}`);
 
-    // Remove from manual mode if they were there
     manualOnlyChats.delete(phone);
 
-    // Track this phone for nudges
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
 
-    // Send follow-up message if provided
     let sentMessage = "";
     if (message && message.trim()) {
       await sendText(phone, message);
@@ -1164,7 +1129,8 @@ app.post("/admin/reactivate", async (req, res) => {
 // ── HEALTH CHECK ──────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({
-    agent: "Beauty Box AI Agent v2.3",
+    agent: "Beauty Box AI Agent v2.4",
+    tone: "Natural Professional Female Expert",
     claude: ANTHROPIC_API_KEY ? "OK" : "MISSING",
     wapi: WAPI_VENDOR_UID ? "OK" : "MISSING",
     sheets: sheetsClient ? "OK" : "DISABLED",
@@ -1190,7 +1156,7 @@ async function sendDailyReport() {
     for (let i = 1; i < rows.length; i++) {
       if (rows[i][7] && rows[i][7].includes(todayStr.split("/")[0])) today++;
     }
-    await sendText(ADMIN_PHONE, `🌅 Beauty Box Daily Report\n\n✅ Bot is running fine\n📊 Total leads: ${total}\n📅 New today: ${today}\n💬 Active conversations: ${conversations.size}\n🔔 Nudge tracking: ${lastMessageTime.size} leads\n\nCheck /admin for details.`);
+    await sendText(ADMIN_PHONE, `🌅 Beauty Box Daily Report\n\n✅ Bot is running fine (v2.4)\n📊 Total leads: ${total}\n📅 New today: ${today}\n💬 Active conversations: ${conversations.size}\n🔔 Nudge tracking: ${lastMessageTime.size} leads\n\nCheck /admin for details.`);
   } catch (err) {
     console.error("Daily report error:", err.message);
   }
@@ -1212,7 +1178,9 @@ function scheduleDailyReport() {
 
 // ── STARTUP ───────────────────────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`\n🚀 Beauty Box Agent v2.3 on port ${PORT}`);
+  console.log(`\n🚀 Beauty Box Agent v2.4 on port ${PORT}`);
+  console.log(`✨ Tone: Natural Professional Female Expert`);
+  console.log(`💧 Hydra Path: Updated conversation flow`);
   console.log(`🔑 Claude:  ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`📱 WAPI:    ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
   console.log(`🔐 Token:   ${WAPI_TOKEN ? "OK" : "MISSING"}`);
@@ -1225,5 +1193,5 @@ app.listen(PORT, async () => {
   console.log(`📋 Menu system: active (A/B/C/D paths)`);
   console.log(`📍 Location extraction: active`);
   console.log(`♻️ Reactivate feature: active`);
-  console.log(`✅ All systems ready\n`);
+  console.log(`✅ All systems ready (v2.4)\n`);
 });
