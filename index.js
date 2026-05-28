@@ -59,6 +59,36 @@ async function ensureHeaders() {
   }
 }
 
+// ── GET CUSTOMER DATA FROM SHEETS ──────────────────────────────
+async function getCustomerData(phone) {
+  if (!sheetsClient) return null;
+  try {
+    const row = await findRow("Active Leads", phone);
+    if (row < 1) return null;
+    
+    const res = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `Active Leads!A${row}:J${row}`,
+    });
+    const current = res.data.values?.[0];
+    if (!current) return null;
+    
+    return {
+      phone: current[0] || "",
+      name: current[1] || "",
+      wedding: current[2] || "",
+      city: current[3] || "",
+      source: current[4] || "",
+      status: current[5] || "",
+      lastMessage: current[6] || "",
+      servicePath: current[9] || "", // Column J
+    };
+  } catch (err) {
+    console.error("getCustomerData error:", err.message);
+    return null;
+  }
+}
+
 // ── SHEET HELPERS ─────────────────────────────────────────────
 function nowIST() {
   return new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
@@ -1035,7 +1065,7 @@ app.get("/admin", (req, res) => {
   res.setHeader("Content-Type", "text/html");
   res.send(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Beauty Box Admin</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:420px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="card"><h2>Beauty Box</h2><p>Send opening message and start bot</p><label>Phone number (with country code, no +)</label><input id="ph" type="tel" placeholder="919999999999"><label>Customer name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message <span style="font-weight:400;color:#aaa">(editable)</span></label><textarea id="omsg">${defaultMsg}</textarea><div class="hint">Edit before sending. Bot takes over after customer replies.</div><label>Admin key</label><input id="ky" type="password" placeholder="Enter admin key"><div style="display:flex;gap:10px;margin-top:18px"><button onclick="go(true)" style="flex:1;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer">Send Message &amp; Activate Bot</button><button onclick="go(false)" style="flex:1;background:#555;color:#fff;border:none;border-radius:10px;padding:11px;font-size:13px;cursor:pointer">Activate Bot Only<br><span style="font-size:11px;opacity:0.8">(message sent manually)</span></button></div><div class="msg" id="msg"></div><small>Bot handles all replies automatically.</small></div><script>async function go(sendMsg){const ph=document.getElementById('ph').value.trim();const nm=document.getElementById('nm').value.trim();const ky=document.getElementById('ky').value.trim();const om=document.getElementById('omsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:sendMsg?om:'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh(sendMsg?'Sent to '+ph+'. Bot activated!':'Bot activated for '+ph,'ok');document.getElementById('ph').value='';document.getElementById('nm').value='';}else sh(d.error||'Error','err');}catch(e){sh('Network error','err');}}function sh(t,c){const el=document.getElementById('msg');el.textContent=t;el.className='msg '+c;el.style.display='block';}document.getElementById('ky').addEventListener('keydown',e=>{if(e.key==='Enter')go(true);});</script></body></html>`);
+<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}button.secondary{background:#555;margin-top:8px}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="container"><div class="card"><h2>New Chat</h2><p>Send opening message and start bot</p><label>Phone number (with country code, no +)</label><input id="ph" type="tel" placeholder="919999999999"><label>Customer name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message <span style="font-weight:400;color:#aaa">(editable)</span></label><textarea id="omsg">${defaultMsg}</textarea><div class="hint">Edit before sending. Bot takes over after customer replies.</div><label>Admin key</label><input id="ky" type="password" placeholder="Enter admin key"><button onclick="goNew(true)">Send Message &amp; Activate Bot</button><button class="secondary" onclick="goNew(false)">Activate Bot Only</button><div class="msg" id="msg1"></div><small>Bot handles all replies automatically.</small></div><div class="card"><h2>Reactivate Customer</h2><p>Load customer history & continue conversation</p><label>Customer phone (with country code, no +)</label><input id="rph" type="tel" placeholder="919999999999"><label>Follow-up message <span style="font-weight:400;color:#aaa">(optional)</span></label><textarea id="rmsg" placeholder="Warm message to re-engage customer...">Hi! Bas check kar rahi thi — kaise chal rahi hai shaadi ki tayaari?</textarea><div class="hint">Leave blank to just reactivate without sending message.</div><label>Admin key</label><input id="rky" type="password" placeholder="Enter admin key"><button onclick="goReactivate()">Reactivate &amp; Continue</button><div class="msg" id="msg2"></div><small>Bot will read their history and resume conversation.</small></div></div><script>async function goNew(sendMsg){const ph=document.getElementById('ph').value.trim();const nm=document.getElementById('nm').value.trim();const ky=document.getElementById('ky').value.trim();const om=document.getElementById('omsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:sendMsg?om:'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh(sendMsg?'Sent to '+ph+'. Bot activated!':'Bot activated for '+ph,'ok','msg1');document.getElementById('ph').value='';document.getElementById('nm').value='';}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}async function goReactivate(){const ph=document.getElementById('rph').value.trim();const ky=document.getElementById('rky').value.trim();const rmsg=document.getElementById('rmsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg2');return;}try{const r=await fetch('/admin/reactivate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,key:ky,message:rmsg})});const d=await r.json();if(d.success){sh('✅ '+d.message,'ok','msg2');document.getElementById('rph').value='';document.getElementById('rmsg').value='';}else sh(d.error||'Error','err','msg2');}catch(e){sh('Network error','err','msg2');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}document.getElementById('ky').addEventListener('keydown',e=>{if(e.key==='Enter')goNew(true);});document.getElementById('rky').addEventListener('keydown',e=>{if(e.key==='Enter')goReactivate();});</script></body></html>`);
 });
 
 app.post("/admin/start", async (req, res) => {
@@ -1071,10 +1101,70 @@ app.post("/admin/start", async (req, res) => {
   }
 });
 
+app.post("/admin/reactivate", async (req, res) => {
+  const { phone, key, message } = req.body;
+  if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
+  if (!phone) return res.json({ success: false, error: "Phone number required" });
+  
+  try {
+    // Get customer data from Active Leads sheet
+    const customerData = await getCustomerData(phone);
+    if (!customerData) {
+      return res.json({ success: false, error: "Customer not found in records" });
+    }
+
+    const firstName = customerData.name ? customerData.name.split(" ")[0] : "Customer";
+    const servicePath = customerData.servicePath || "Unknown";
+
+    console.log(`📞 REACTIVATING: ${firstName} (${phone}) | Path: ${servicePath}`);
+
+    // Initialize conversation history (simulate resume)
+    if (!conversations.has(phone)) {
+      conversations.set(phone, []);
+    }
+    const history = getHistory(phone);
+    
+    // Add context about reactivation
+    addToHistory(phone, "system", `[REACTIVATED] Previous path: ${servicePath}. Last status: ${customerData.status}`);
+
+    // Remove from manual mode if they were there
+    manualOnlyChats.delete(phone);
+
+    // Track this phone for nudges
+    lastMessageTime.set(phone, Date.now());
+    nudgeSent.set(phone, false);
+
+    // Send follow-up message if provided
+    let sentMessage = "";
+    if (message && message.trim()) {
+      await sendText(phone, message);
+      addToHistory(phone, "assistant", message);
+      sentMessage = message;
+      console.log(`💬 Reactivation message sent to ${phone}`);
+    }
+
+    res.json({
+      success: true,
+      message: `Reactivated ${firstName}. Previous path: ${servicePath}. Ready to continue conversation.`,
+      customerData: {
+        name: firstName,
+        phone,
+        servicePath,
+        wedding: customerData.wedding,
+        city: customerData.city,
+        lastStatus: customerData.status,
+      }
+    });
+  } catch (err) {
+    console.error("Reactivate error:", err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // ── HEALTH CHECK ──────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({
-    agent: "Beauty Box AI Agent v2.2",
+    agent: "Beauty Box AI Agent v2.3",
     claude: ANTHROPIC_API_KEY ? "OK" : "MISSING",
     wapi: WAPI_VENDOR_UID ? "OK" : "MISSING",
     sheets: sheetsClient ? "OK" : "DISABLED",
@@ -1122,7 +1212,7 @@ function scheduleDailyReport() {
 
 // ── STARTUP ───────────────────────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`\n🚀 Beauty Box Agent v2.2 on port ${PORT}`);
+  console.log(`\n🚀 Beauty Box Agent v2.3 on port ${PORT}`);
   console.log(`🔑 Claude:  ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`📱 WAPI:    ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
   console.log(`🔐 Token:   ${WAPI_TOKEN ? "OK" : "MISSING"}`);
@@ -1133,5 +1223,7 @@ app.listen(PORT, async () => {
   scheduleNudgeCheck();
   console.log(`🔔 Nudge system: active (24h silence trigger)`);
   console.log(`📋 Menu system: active (A/B/C/D paths)`);
+  console.log(`📍 Location extraction: active`);
+  console.log(`♻️ Reactivate feature: active`);
   console.log(`✅ All systems ready\n`);
 });
