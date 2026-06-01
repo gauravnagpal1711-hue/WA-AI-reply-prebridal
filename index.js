@@ -247,6 +247,7 @@ function detectStatus(aiReply, customerMsg) {
   if (reply.includes("hydra facial package")) return "💧 Hydra Interest";
   if (reply.includes("family se baat kar lijiye") || reply.includes("mummy ko dikhayein")) return "👨‍👩‍👧 Awaiting Family OK";
   if (reply.includes("abhi time hai") && reply.includes("skincare")) return "🌱 Nurture - Far Wedding";
+  if (reply.includes("₹499") && reply.includes("nail")) return "💅 Nail Service Interest";
 
   if (msg.includes("nahi chahiye") || msg.includes("not interested") || msg.includes("don't want")) return "❌ Not Interested";
   if (msg.includes("yes") || msg.includes("confirm") || msg.includes("book")) return "✅ Interested";
@@ -350,8 +351,9 @@ Aap kaunsi service ke baare mein jaanna chahti hain?
 *B* — Pre Bridal+Makeup
 *C* — Hydra Package
 *D* — Other Services
+*E* — Nail Services
 
-Reply *A, B, C ya D* karein 😊`;
+Reply *A, B, C, D ya E* karein 😊`;
 
 async function sendMenuButtons(toPhone) {
   try {
@@ -370,7 +372,8 @@ async function sendMenuButtons(toPhone) {
               { id: "A", title: "Pre-Bridal Package",    description: "12 services, 3 sittings" },
               { id: "B", title: "Pre Bridal+Makeup",     description: "Complete bridal combo" },
               { id: "C", title: "Hydra Package",         description: "Deep hydration facials" },
-              { id: "D", title: "Other Services",        description: "Waxing, hair, nails & more" }
+              { id: "D", title: "Other Services",        description: "Waxing, hair, nails & more" },
+              { id: "E", title: "Nail Services",         description: "₹499 launch offer" }
             ]
           }]
         }
@@ -390,7 +393,8 @@ function detectMenuSelection(text) {
   if (t === "a" || t === "1" || t.includes("pre-bridal") || t.includes("pre bridal")) return "A";
   if (t === "b" || t === "2" || t.includes("combo") || (t.includes("bridal") && t.includes("makeup"))) return "B";
   if (t === "c" || t === "3" || t.includes("hydra")) return "C";
-  if (t === "d" || t === "4" || t.includes("other") || t.includes("beauty service") || t.includes("wax") || t.includes("facial") || t.includes("hair") || t.includes("nail")) return "D";
+  if (t === "e" || t === "5" || t.includes("nail")) return "E";
+  if (t === "d" || t === "4" || t.includes("other") || t.includes("beauty service") || t.includes("wax") || t.includes("facial") || t.includes("hair")) return "D";
   return null;
 }
 
@@ -430,6 +434,20 @@ Name: ${name}
 Customer message: "${customerMsg}"
 INSTRUCTION: Follow PATH D. Ask which specific service they're looking for, then share the price from the complete price list.
 Use polite English first then Hinglish.`;
+
+    case "E":
+      return `Customer selected: Nail Services.
+Name: ${name}
+Customer message: "${customerMsg}"
+INSTRUCTION: NAIL SERVICES PATH E - Natural Professional Flow:
+1. Ask about nail service experience: "Have you done [service] before?"
+2. Trust builder: Share experience - "We've done 100+ nail services. Premium quality, no damage, 3-4 weeks lasting!"
+3. Ask location: "Where are you located?"
+4. Present offer: "₹499 for ANY nail service!" (Normal: Rs.1,200-1,500)
+5. Booking: "Direct studio visit, call Garima ma'am, or still thinking?"
+6. Confirm slot: Share location, date, time
+TONE: Warm, professional. Professional nail staff handles services. We will give aftercare tips.
+CLOSING: "Our professional nail team will take great care of you. We will give aftercare tips to keep nails perfect!"`;
 
     default:
       return `Customer message: "${customerMsg}". Name: ${name}. Respond naturally and help them.`;
@@ -942,7 +960,7 @@ app.post("/webhook", async (req, res) => {
         ? (interactiveId || "")
         : detectMenuSelection(text);
 
-      if (selection && ["A","B","C","D"].includes(selection)) {
+      if (selection && ["A","B","C","D","E"].includes(selection)) {
         pendingMenuSelect.delete(phone);
         customerPath.set(phone, selection);
 
@@ -956,6 +974,7 @@ app.post("/webhook", async (req, res) => {
           "B": "Pre Bridal+Makeup",
           "C": "Hydra Package",
           "D": "Other Services",
+          "E": "Nail Services",
         };
         await updateActiveLead(phone, {
           status: `📂 ${pathLabels[selection]}`,
@@ -974,7 +993,7 @@ app.post("/webhook", async (req, res) => {
         }
         return;
       } else {
-        await sendText(phone, "Aap *A, B, C ya D* reply karein — main help kar sakti hoon 😊");
+        await sendText(phone, "Aap *A, B, C, D ya E* reply karein — main help kar sakti hoon 😊");
         return;
       }
     }
@@ -1181,6 +1200,7 @@ app.listen(PORT, async () => {
   console.log(`\n🚀 Beauty Box Agent v2.4 on port ${PORT}`);
   console.log(`✨ Tone: Natural Professional Female Expert`);
   console.log(`💧 Hydra Path: Updated conversation flow`);
+  console.log(`💅 Nail Services: NEW Path E with professional staff`);
   console.log(`🔑 Claude:  ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`📱 WAPI:    ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
   console.log(`🔐 Token:   ${WAPI_TOKEN ? "OK" : "MISSING"}`);
@@ -1190,8 +1210,8 @@ app.listen(PORT, async () => {
   scheduleDailyReport();
   scheduleNudgeCheck();
   console.log(`🔔 Nudge system: active (24h silence trigger)`);
-  console.log(`📋 Menu system: active (A/B/C/D paths)`);
+  console.log(`📋 Menu system: active (A/B/C/D/E paths)`);
   console.log(`📍 Location extraction: active`);
   console.log(`♻️ Reactivate feature: active`);
-  console.log(`✅ All systems ready (v2.4)\n`);
+  console.log(`✅ All systems ready (v2.4 + Nail Services)\n`);
 });
