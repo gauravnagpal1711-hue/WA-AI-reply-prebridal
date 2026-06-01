@@ -7,6 +7,12 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
+// ── PHONE NUMBER NORMALIZATION ────────────────────────────────
+function normalizePhone(phone) {
+  // Remove all non-digits and return full clean number
+  return (phone || "").replace(/\D/g, "");
+}
+
 const PORT              = process.env.PORT              || 3000;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const WAPI_VENDOR_UID   = process.env.WAPI_VENDOR_UID   || "";
@@ -857,7 +863,128 @@ function parseWebhook(body) {
   } catch (e) { return null; }
 }
 
-// ── WEBHOOK ENDPOINT ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// WEBHOOK DIAGNOSTIC ENDPOINTS - FOR TESTING GARIMA'S MESSAGES
+// ═══════════════════════════════════════════════════════════════
+
+// Diagnostic webhook to capture ALL webhook events
+app.post("/webhook-diagnostic", async (req, res) => {
+  try {
+    const timestamp = new Date().toISOString();
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Log the COMPLETE webhook body
+    const logFile = path.join(__dirname, 'webhook-logs.json');
+    const logEntry = {
+      timestamp,
+      body: req.body,
+      headers: req.headers,
+      type: "UNKNOWN"
+    };
+
+    // Try to identify message type
+    try {
+      const messages = req.body?.entry?.[0]?.changes?.[0]?.value?.messages;
+      if (messages?.length > 0) {
+        const msg = messages[0];
+        logEntry.type = `INFLOW - ${msg.type} message from customer`;
+        logEntry.from = msg.from;
+        logEntry.messageType = msg.type;
+        logEntry.timestamp_msg = msg.timestamp;
+      }
+
+      const statuses = req.body?.entry?.[0]?.changes?.[0]?.value?.statuses;
+      if (statuses?.length > 0) {
+        const status = statuses[0];
+        logEntry.type = `STATUS UPDATE - Message sent/delivered/read`;
+        logEntry.status = status.status;
+        logEntry.messageId = status.id;
+      }
+    } catch (e) {
+      logEntry.parseError = e.message;
+    }
+
+    // Append to log file
+    try {
+      let logs = [];
+      if (fs.existsSync(logFile)) {
+        const existing = fs.readFileSync(logFile, 'utf8');
+        logs = JSON.parse(existing);
+      }
+      logs.push(logEntry);
+      // Keep only last 100 entries
+      if (logs.length > 100) logs = logs.slice(-100);
+      fs.writeFileSync(logFile, JSON.stringify(logs, null, 2));
+      console.log(`📋 [${timestamp}] Webhook logged: ${logEntry.type}`);
+    } catch (err) {
+      console.error("❌ Failed to write log:", err.message);
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("❌ Diagnostic webhook error:", err);
+    res.sendStatus(200);
+  }
+});
+
+// View the diagnostic logs
+app.get("/webhook-logs", (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const logFile = path.join(__dirname, 'webhook-logs.json');
+
+    if (!fs.existsSync(logFile)) {
+      return res.json({ 
+        message: "No logs yet. Test webhook by:",
+        step1: "Point wapi.in.net webhook to: https://your-railway-url/webhook-diagnostic",
+        step2: "Have customer send a message",
+        step3: "Garima send a manual reply",
+        step4: "Customer reply again",
+        step5: "Check logs here"
+      });
+    }
+
+    const logs = JSON.parse(fs.readFileSync(logFile, 'utf8'));
+    
+    // Analyze the logs
+    const analysis = {
+      total: logs.length,
+      inflow: logs.filter(l => l.type.includes("INFLOW")).length,
+      status: logs.filter(l => l.type.includes("STATUS")).length,
+      unknown: logs.filter(l => l.type.includes("UNKNOWN")).length,
+      types: [...new Set(logs.map(l => l.type))],
+      logs: logs
+    };
+
+    res.json(analysis);
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// Clear the diagnostic logs
+app.post("/webhook-logs/clear", (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const logFile = path.join(__dirname, 'webhook-logs.json');
+    
+    if (fs.existsSync(logFile)) {
+      fs.unlinkSync(logFile);
+    }
+    
+    res.json({ message: "Logs cleared" });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN WEBHOOK ENDPOINT
+// ═══════════════════════════════════════════════════════════════
+
 app.post("/webhook", async (req, res) => {
   try {
     const parsed = parseWebhook(req.body);
@@ -884,10 +1011,10 @@ app.post("/webhook", async (req, res) => {
       if (instruction.toLowerCase().includes("enable auto")) {
         const match = instruction.match(/(\d{10,})/);
         if (match) {
-          const targetPhone = match[1];
+          const targetPhone = normalizePhone(match[1]);
           manualOnlyChats.delete(targetPhone);
-          console.log(`🤖 AUTO MODE ENABLED for ${targetPhone}`);
-          await sendText(phone, `Auto mode enabled for ${targetPhone}. Bot will now respond to their messages.`);
+          console.log(`🤖 AUTO MODE ENABLED for ${match[1]} (${targetPhone})`);
+          await sendText(phone, `Auto mode enabled for ${match[1]}. Bot will now respond to their messages.`);
           return;
         }
       }
@@ -918,8 +1045,9 @@ app.post("/webhook", async (req, res) => {
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
 
-    if (manualOnlyChats.has(phone)) {
-      console.log(`📝 MANUAL MODE: ${phone} — bot will not respond.`);
+    const normalizedPhone = normalizePhone(phone);
+    if (manualOnlyChats.has(normalizedPhone)) {
+      console.log(`📝 MANUAL MODE: ${phone} → ${normalizedPhone} — bot will not respond.`);
       await addToHistory(phone, "user", text);
       const extractedDate = extractWeddingDateFromChat(text);
       const extractedLocation = extractLocationFromChat(text);
@@ -937,6 +1065,7 @@ app.post("/webhook", async (req, res) => {
       res.sendStatus(200);
       return;
     }
+
     if (isNewLead) {
       const lead = isAdDM(text) ? {} : extractLeadDetails(text);
       const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
@@ -1063,6 +1192,7 @@ app.post("/admin/start", async (req, res) => {
   if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
   if (!phone) return res.json({ success: false, error: "Phone number required" });
   try {
+    const normalizedPhone = normalizePhone(phone);
     const sendMsg = req.body.sendMessage !== false;
     const firstName = name ? name.trim().split(" ")[0] : "";
 
@@ -1071,19 +1201,19 @@ app.post("/admin/start", async (req, res) => {
       await new Promise(r => setTimeout(r, 1000));
       await sendText(phone, openingMsg);
       addToHistory(phone, "assistant", openingMsg);
-      manualOnlyChats.add(phone);
+      manualOnlyChats.add(normalizedPhone);
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
       await addActiveLead(phone, firstName, "", "", "Admin Initiated", "💬 Conversation Started", openingMsg);
-      console.log(`🚀 ADMIN: Message sent for ${phone} — MANUAL MODE active`);
+      console.log(`🚀 ADMIN: Message sent for ${phone} (${normalizedPhone}) — MANUAL MODE active`);
     } else {
       conversations.set(phone, []);
       addToHistory(phone, "assistant", "Admin activated this number.");
-      manualOnlyChats.add(phone);
+      manualOnlyChats.add(normalizedPhone);
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
       await addActiveLead(phone, firstName, "", "", "Admin Activated", "🆕 New Lead", "Manually activated");
-      console.log(`📋 ADMIN: Activated ${phone} — MANUAL MODE active`);
+      console.log(`📋 ADMIN: Activated ${phone} (${normalizedPhone}) — MANUAL MODE active`);
     }
     res.json({ success: true });
   } catch (err) {
@@ -1097,6 +1227,7 @@ app.post("/admin/reactivate", async (req, res) => {
   if (!phone) return res.json({ success: false, error: "Phone number required" });
   
   try {
+    const normalizedPhone = normalizePhone(phone);
     const customerData = await getCustomerData(phone);
     if (!customerData) {
       return res.json({ success: false, error: "Customer not found in records" });
@@ -1105,7 +1236,7 @@ app.post("/admin/reactivate", async (req, res) => {
     const firstName = customerData.name ? customerData.name.split(" ")[0] : "Customer";
     const servicePath = customerData.servicePath || "Unknown";
 
-    console.log(`📞 REACTIVATING: ${firstName} (${phone}) | Path: ${servicePath}`);
+    console.log(`📞 REACTIVATING: ${firstName} (${phone} → ${normalizedPhone}) | Path: ${servicePath}`);
 
     if (!conversations.has(phone)) {
       conversations.set(phone, []);
@@ -1114,7 +1245,7 @@ app.post("/admin/reactivate", async (req, res) => {
     
     addToHistory(phone, "system", `[REACTIVATED] Previous path: ${servicePath}. Last status: ${customerData.status}`);
 
-    manualOnlyChats.delete(phone);
+    manualOnlyChats.delete(normalizedPhone);
 
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
@@ -1201,11 +1332,13 @@ app.listen(PORT, async () => {
   console.log(`✨ Tone: Natural Professional Female Expert`);
   console.log(`💧 Hydra Path: Updated conversation flow`);
   console.log(`💅 Nail Services: NEW Path E with professional staff`);
+  console.log(`📋 Diagnostic: Webhook testing endpoints active`);
   console.log(`🔑 Claude:  ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`📱 WAPI:    ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
   console.log(`🔐 Token:   ${WAPI_TOKEN ? "OK" : "MISSING"}`);
   console.log(`📊 Sheet ID: ${SHEET_ID ? "OK" : "MISSING"}`);
   console.log(`🔒 Admin:   /admin (key: ${ADMIN_KEY})`);
+  console.log(`🧪 Diagnostic: /webhook-diagnostic, /webhook-logs, /webhook-logs/clear`);
   await initSheets();
   scheduleDailyReport();
   scheduleNudgeCheck();
@@ -1213,5 +1346,5 @@ app.listen(PORT, async () => {
   console.log(`📋 Menu system: active (A/B/C/D/E paths)`);
   console.log(`📍 Location extraction: active`);
   console.log(`♻️ Reactivate feature: active`);
-  console.log(`✅ All systems ready (v2.4 + Nail Services)\n`);
+  console.log(`✅ All systems ready (v2.4 + Nail Services + Diagnostic)\n`);
 });
