@@ -1,1217 +1,197 @@
-const express = require("express");
-const axios   = require("axios");
-const path    = require("path");
-const { google } = require("googleapis");
+// ═══════════════════════════════════════════════════════════════
+// WEBHOOK DIAGNOSTIC TEST - Add to index.js temporarily
+// ═══════════════════════════════════════════════════════════════
 
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname)));
+// Add this BEFORE the webhook endpoint (before line 860 in your code)
 
-const PORT              = process.env.PORT              || 3000;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
-const WAPI_VENDOR_UID   = process.env.WAPI_VENDOR_UID   || "";
-const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";
-const ADMIN_KEY         = process.env.ADMIN_KEY         || "beautybox2024";
-const SHEET_ID          = process.env.SHEET_ID          || "";
-const ADMIN_PHONE       = "919560277217";
-const GARIMA_PHONE      = "919354260517";
-
-// ── GOOGLE SHEETS SETUP ───────────────────────────────────────
-let sheetsClient = null;
-async function initSheets() {
+// Create a separate diagnostic webhook to log EVERYTHING
+app.post("/webhook-diagnostic", async (req, res) => {
   try {
-    if (!process.env.GOOGLE_CREDENTIALS || !SHEET_ID) {
-      console.log("⚠️ Google Sheets disabled — credentials or SHEET_ID missing");
-      return;
-    }
-    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-    const auth  = new google.auth.GoogleAuth({
-      credentials: creds,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
-    sheetsClient = google.sheets({ version: "v4", auth });
-    console.log("📊 Google Sheets connected ✅");
-    await ensureHeaders();
-  } catch (err) {
-    console.error("❌ Sheets init failed:", err.message);
-  }
-}
-
-async function ensureHeaders() {
-  try {
-    const activeHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Status", "Last Message", "First Seen", "Last Updated", "Service Path"];
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: "Active Leads!A1:J1",
-      valueInputOption: "RAW",
-      resource: { values: [activeHeaders] },
-    });
-    const followupHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Template Sent", "Sent Date", "Notes"];
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: "Followup!A1:H1",
-      valueInputOption: "RAW",
-      resource: { values: [followupHeaders] },
-    });
-    console.log("📋 Sheet headers verified");
-  } catch (err) {
-    console.log("⚠️ Header setup skipped:", err.message);
-  }
-}
-
-// ── GET CUSTOMER DATA FROM SHEETS ──────────────────────────────
-async function getCustomerData(phone) {
-  if (!sheetsClient) return null;
-  try {
-    const row = await findRow("Active Leads", phone);
-    if (row < 1) return null;
+    const timestamp = new Date().toISOString();
+    const fs = require('fs');
+    const path = require('path');
     
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
-    });
-    const current = res.data.values?.[0];
-    if (!current) return null;
-    
-    return {
-      phone: current[0] || "",
-      name: current[1] || "",
-      wedding: current[2] || "",
-      city: current[3] || "",
-      source: current[4] || "",
-      status: current[5] || "",
-      lastMessage: current[6] || "",
-      servicePath: current[9] || "",
+    // Log the COMPLETE webhook body
+    const logFile = path.join(__dirname, 'webhook-logs.json');
+    const logEntry = {
+      timestamp,
+      body: req.body,
+      headers: req.headers,
+      type: "UNKNOWN"
     };
-  } catch (err) {
-    console.error("getCustomerData error:", err.message);
-    return null;
-  }
-}
 
-// ── SHEET HELPERS ─────────────────────────────────────────────
-function nowIST() {
-  return new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-}
-
-async function findRow(sheetName, phone) {
-  if (!sheetsClient) return -1;
-  try {
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${sheetName}!A:A`,
-    });
-    const rows = res.data.values || [];
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] && rows[i][0].toString().replace(/\D/g, "").endsWith(phone.replace(/\D/g, ""))) {
-        return i + 1;
-      }
-    }
-    return -1;
-  } catch (err) {
-    console.error("findRow error:", err.message);
-    return -1;
-  }
-}
-
-async function addActiveLead(phone, name, wedding, city, source, status, lastMsg) {
-  if (!sheetsClient) return;
-  try {
-    const existing = await findRow("Active Leads", phone);
-    if (existing > 0) {
-      await updateActiveLead(phone, { status, lastMsg, name, wedding, city });
-      return;
-    }
-    await sheetsClient.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: "Active Leads!A:J",
-      valueInputOption: "RAW",
-      resource: {
-        values: [[
-          phone, name || "", wedding || "", city || "", source || "",
-          status || "🆕 New Lead",
-          (lastMsg || "").substring(0, 200),
-          nowIST(), nowIST(),
-          "",
-        ]],
-      },
-    });
-    console.log(`📊 Added to Active Leads: ${phone}`);
-  } catch (err) {
-    console.error("addActiveLead error:", err.message);
-  }
-}
-
-async function updateActiveLead(phone, updates) {
-  if (!sheetsClient) return;
-  try {
-    const row = await findRow("Active Leads", phone);
-    if (row < 1) return;
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
-    });
-    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", ""];
-    const updated = [
-      current[0] || phone,
-      updates.name    || current[1] || "",
-      updates.wedding || current[2] || "",
-      updates.city    || current[3] || "",
-      current[4] || "",
-      updates.status  || current[5] || "💬 Conversation Started",
-      (updates.lastMsg || current[6] || "").substring(0, 200),
-      current[7] || nowIST(),
-      nowIST(),
-      updates.servicePath || current[9] || "",
-    ];
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
-      valueInputOption: "RAW",
-      resource: { values: [updated] },
-    });
-  } catch (err) {
-    console.error("updateActiveLead error:", err.message);
-  }
-}
-
-async function isInFollowupSent(phone) {
-  if (!sheetsClient) return null;
-  try {
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "Followup!A:H",
-    });
-    const rows = res.data.values || [];
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row[0]) continue;
-      const rowPhone = row[0].toString().replace(/\D/g, "");
-      const matchPhone = phone.replace(/\D/g, "");
-      const status = (row[5] || "").toString().toLowerCase();
-      if (rowPhone.endsWith(matchPhone) && (status === "sent" || status === "pending")) {
-        return {
-          rowNum: i + 1,
-          phone: row[0],
-          name: row[1] || "",
-          wedding: row[2] || "",
-          city: row[3] || "",
-          source: row[4] || "Followup",
-        };
-      }
-    }
-    return null;
-  } catch (err) {
-    console.error("isInFollowupSent error:", err.message);
-    return null;
-  }
-}
-
-async function markFollowupReplied(phone) {
-  if (!sheetsClient) return;
-  try {
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "Followup!A:F",
-    });
-    const rows = res.data.values || [];
-    for (let i = 1; i < rows.length; i++) {
-      if (!rows[i][0]) continue;
-      const rowPhone = rows[i][0].toString().replace(/\D/g, "");
-      if (rowPhone.endsWith(phone.replace(/\D/g, ""))) {
-        await sheetsClient.spreadsheets.values.update({
-          spreadsheetId: SHEET_ID,
-          range: `Followup!F${i + 1}`,
-          valueInputOption: "RAW",
-          resource: { values: [["Replied"]] },
-        });
-        console.log(`📊 Marked Followup as Replied: ${phone}`);
-        return;
-      }
-    }
-  } catch (err) {
-    console.error("markFollowupReplied error:", err.message);
-  }
-}
-
-// ── STATUS DETECTION ──────────────────────────────────────────
-function detectStatus(aiReply, customerMsg) {
-  const reply = (aiReply || "").toLowerCase();
-  const msg   = (customerMsg || "").toLowerCase();
-
-  if (reply.includes("garima ma'am aapko") && reply.includes("qr")) return "💳 Advance Pending";
-  if (reply.includes("garima ma'am se timing confirm")) return "🏠 Studio Visit Scheduled";
-  if (reply.includes("pre-bridal package — 12 services")) return "📋 Package Shared";
-  if (reply.includes("why pay more")) return "💰 Price Shared";
-  if (reply.includes("combo price") && reply.includes("16,500")) return "💑 Combo Interest";
-  if (reply.includes("hydra facial package")) return "💧 Hydra Interest";
-  if (reply.includes("family se baat kar lijiye") || reply.includes("mummy ko dikhayein")) return "👨‍👩‍👧 Awaiting Family OK";
-  if (reply.includes("abhi time hai") && reply.includes("skincare")) return "🌱 Nurture - Far Wedding";
-  if (reply.includes("₹499") && reply.includes("nail")) return "💅 Nail Service Interest";
-
-  if (msg.includes("nahi chahiye") || msg.includes("not interested") || msg.includes("don't want")) return "❌ Not Interested";
-  if (msg.includes("yes") || msg.includes("confirm") || msg.includes("book")) return "✅ Interested";
-
-  return null;
-}
-
-// ── META & AD TRIGGERS ────────────────────────────────────────
-const META_TRIGGER  = "i filled in your form and would like to know more about your business";
-const AD_DM_TRIGGER = "hello! can i get more info on this";
-
-function isMetaLead(text) {
-  const lower = text.toLowerCase().trim();
-  return lower.includes(META_TRIGGER) || lower.includes(AD_DM_TRIGGER);
-}
-function isAdDM(text) {
-  return text.toLowerCase().trim().includes(AD_DM_TRIGGER);
-}
-
-function extractLeadDetails(text) {
-  const d = {};
-  for (const line of text.split("\n").map(l => l.trim())) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = line.substring(0, colonIdx).toLowerCase().trim();
-    const val = line.substring(colonIdx + 1).trim();
-    if (key === "full_name" || key === "name")                                       d.name    = val;
-    if (key === "when_is_your_wedding_date" || key === "when_is_your_wedding_date?") d.wedding = val;
-    if (key === "city/area" || key === "city" || key === "area")                     d.city    = val;
-  }
-  return d;
-}
-
-// ── WEDDING DATE EXTRACTOR FROM CHAT ─────────────────────────
-function extractWeddingDateFromChat(text) {
-  const months = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec";
-  const patterns = [
-    new RegExp(`(\\d{1,2})\\s*(st|nd|rd|th)?\\s*(${months})\\s*(\\d{2,4})?`, "i"),
-    new RegExp(`(${months})\\s+(\\d{1,2})(\\s*(\\d{2,4}))?`, "i"),
-    /(\d{1,2})[\/\-](\d{1,2})([\/\-](\d{2,4}))?/,
-    new RegExp(`(${months})\\s*(mein|ko|tak|me)?`, "i"),
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) return match[0].trim();
-  }
-  return null;
-}
-
-// ── LOCATION EXTRACTOR FROM CHAT ─────────────────────────────
-function extractLocationFromChat(text) {
-  const locations = [
-    "Dwarka", "Noida", "Janakpuri", "Vikaspuri", "Uttam Nagar", "Rajouri Garden",
-    "Greater Noida", "Gurgaon", "Gurugram", "Faridabad", "Delhi", "West Delhi",
-    "South Delhi", "North Delhi", "East Delhi", "Central Delhi", "New Delhi",
-    "Connaught Place", "CP", "Shahdara", "Pitampura", "Defence Colony",
-    "Green Park", "Karol Bagh", "Rohini", "Malviya Nagar", "Sector", "Crossing",
-    "Sector 104", "Sector 105", "Sector 110", "Sector 126"
-  ];
-  
-  const lowerText = text.toLowerCase();
-  for (const location of locations) {
-    if (lowerText.includes(location.toLowerCase())) {
-      return location;
-    }
-  }
-  return null;
-}
-
-// ── CONVERSATION MEMORY ───────────────────────────────────────
-const conversations      = new Map();
-const lastSentMessage    = new Map();
-const lastMessageTime    = new Map();
-const nudgeSent          = new Map();
-const pendingMenuSelect  = new Set();
-const customerPath       = new Map();
-const manualOnlyChats    = new Set();
-const adminInstructions  = [];
-let   adminTrainerActive = false;
-
-function getHistory(phone) {
-  if (!conversations.has(phone)) conversations.set(phone, []);
-  return conversations.get(phone);
-}
-function addToHistory(phone, role, content) {
-  const h = getHistory(phone);
-  h.push({ role, content });
-  if (h.length > 10) h.splice(0, h.length - 10);
-}
-
-// ── MENU SYSTEM ───────────────────────────────────────────────
-const MENU_BODY = `Welcome to *Beauty Box Makeup Studio* 💄
-
-Aap kaunsi service ke baare mein jaanna chahti hain? Ek option choose karein 👇`;
-
-const MENU_TEXT_FALLBACK = `Welcome to *Beauty Box Makeup Studio* 💄
-
-Aap kaunsi service ke baare mein jaanna chahti hain?
-
-*A* — Pre-Bridal Package
-*B* — Pre Bridal+Makeup
-*C* — Hydra Package
-*D* — Other Services
-*E* — Nail Services
-
-Reply *A, B, C, D ya E* karein 😊`;
-
-async function sendMenuButtons(toPhone) {
-  try {
-    const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
-    const payload = {
-      phone_number: toPhone,
-      message_type: "interactive",
-      interactive: {
-        type: "list",
-        body: { text: MENU_BODY },
-        action: {
-          button: "Choose Service",
-          sections: [{
-            title: "Beauty Box Services",
-            rows: [
-              { id: "A", title: "Pre-Bridal Package",    description: "12 services, 3 sittings" },
-              { id: "B", title: "Pre Bridal+Makeup",     description: "Complete bridal combo" },
-              { id: "C", title: "Hydra Package",         description: "Deep hydration facials" },
-              { id: "D", title: "Other Services",        description: "Waxing, hair, nails & more" },
-              { id: "E", title: "Nail Services",         description: "₹499 launch offer" }
-            ]
-          }]
-        }
-      }
-    };
-    const res = await axios.post(url, payload);
-    console.log(`📋 Interactive menu sent to ${toPhone}`);
-    return res.data;
-  } catch (err) {
-    console.error(`⚠️ Interactive menu failed, using text fallback:`, err?.response?.data?.message || err.message);
-    await sendText(toPhone, MENU_TEXT_FALLBACK);
-  }
-}
-
-function detectMenuSelection(text) {
-  const t = (text || "").trim().toLowerCase();
-  if (t === "a" || t === "1" || t.includes("pre-bridal") || t.includes("pre bridal")) return "A";
-  if (t === "b" || t === "2" || t.includes("combo") || (t.includes("bridal") && t.includes("makeup"))) return "B";
-  if (t === "c" || t === "3" || t.includes("hydra")) return "C";
-  if (t === "e" || t === "5" || t.includes("nail")) return "E";
-  if (t === "d" || t === "4" || t.includes("other") || t.includes("beauty service") || t.includes("wax") || t.includes("facial") || t.includes("hair")) return "D";
-  return null;
-}
-
-function buildPathContext(selectedPath, customerName, wedding, city, customerMsg) {
-  const name = customerName || "not given";
-  switch (selectedPath) {
-    case "A":
-      return `Customer selected: Pre-Bridal Package.
-Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
-Customer message: "${customerMsg}"
-INSTRUCTION: Follow pre-bridal flow. Ask wedding date if not known, then skin type (open-ended), curiosity hook, tips, package details, then closing Path A or B.
-Use polite English first then Hinglish. NEVER use tum/tumhara.`;
-
-    case "B":
-      return `Customer selected: Pre-Bridal + Bridal Makeup Combo.
-Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
-Customer message: "${customerMsg}"
-INSTRUCTION: Follow COMBO PATH B. Share combo pricing. Ask wedding date to assess timing. Then closing.
-Use polite English first then Hinglish.`;
-
-    case "C":
-      return `Customer selected: Hydra Facial Package.
-Name: ${name}
-Customer message: "${customerMsg}"
-INSTRUCTION: HYDRA PATH C - Natural Professional Flow:
-1. Greet warmly: "Perfect! Hydra Facial is amazing for skin hydration and glow."
-2. Ask about skin concern (open-ended): "What's your main skin concern — dryness, dullness, dark circles, or sensitivity?"
-3. When they answer, explain naturally why Hydra helps for THEIR concern (not generic)
-4. Share package info naturally: Single Rs.999 / 3-Sitting Rs.2,799
-5. Ask about convenience: "When would be convenient for you to start?"
-6. Close naturally: "Garima ma'am will confirm your slot."
-Key: NO scripted phrases. Sound like a real skin expert. Always end with question. Short messages (2-3 sentences).`;
-
-    case "D":
-      return `Customer selected: Other Beauty Services.
-Name: ${name}
-Customer message: "${customerMsg}"
-INSTRUCTION: Follow PATH D. Ask which specific service they're looking for, then share the price from the complete price list.
-Use polite English first then Hinglish.`;
-
-    case "E":
-      return `Customer selected: Nail Services.
-Name: ${name}
-Customer message: "${customerMsg}"
-INSTRUCTION: NAIL SERVICES PATH E - Natural Professional Flow:
-1. Ask about nail service experience: "Have you done [service] before?"
-2. Trust builder: Share experience - "We've done 100+ nail services. Premium quality, no damage, 3-4 weeks lasting!"
-3. Ask location: "Where are you located?"
-4. Present offer: "₹499 for ANY nail service!" (Normal: Rs.1,200-1,500)
-5. Booking: "Direct studio visit, call Garima ma'am, or still thinking?"
-6. Confirm slot: Share location, date, time
-TONE: Warm, professional. Professional nail staff handles services. We will give aftercare tips.
-CLOSING: "Our professional nail team will take great care of you. We will give aftercare tips to keep nails perfect!"`;
-
-    default:
-      return `Customer message: "${customerMsg}". Name: ${name}. Respond naturally and help them.`;
-  }
-}
-
-// ── NUDGE SYSTEM ──────────────────────────────────────────────
-const NUDGE_MESSAGES = [
-  "Hi! Bas check kar rahi thi — koi sawaal tha kya? 😊",
-  "Koi confusion ho package ke baare mein toh bata dijiye, help kar sakti hoon!",
-  "Aapki shaadi ki tayaari kaisi chal rahi hai? Koi sawaal ho toh poochhiye 🌸",
-];
-
-function scheduleNudgeCheck() {
-  setInterval(async () => {
-    const now = Date.now();
-    for (const [phone, lastTime] of lastMessageTime.entries()) {
-      const hoursSince = (now - lastTime) / (1000 * 60 * 60);
-      if (hoursSince >= 24 && !nudgeSent.get(phone)) {
-        nudgeSent.set(phone, true);
-        const nudge = NUDGE_MESSAGES[Math.floor(Math.random() * NUDGE_MESSAGES.length)];
-        await sendText(phone, nudge);
-        addToHistory(phone, "assistant", nudge);
-        console.log(`🔔 Nudge sent to ${phone}`);
-      }
-    }
-  }, 30 * 60 * 1000);
-}
-
-// ── UPDATED SYSTEM PROMPT v2.4 - NATURAL PROFESSIONAL FEMALE TONE ──
-const SYSTEM_PROMPT = `You are Radhya, a professional skin specialist at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi (near Janakpuri West Metro).
-
-You chat with customers who enquired about our services via Instagram/Facebook ads.
-
-CRITICAL CONVERSATION RULES (NEVER BREAK THESE):
-
-R1. CHECK HISTORY BEFORE ASKING: Before asking ANY question, check if customer already answered it in this conversation. NEVER ask again.
-
-R2. NO OVER-ENTHUSIASTIC LANGUAGE: NEVER use fake phrases like "That's so exciting!", "Ohh amazing!", "Wow!" Use neutral warm tone. Max 1 emoji per 2-3 messages.
-
-R3. ANSWER CUSTOMER'S QUESTION FIRST: If customer asks anything — answer THAT first. Then ask your next question.
-
-R4. HOME VISIT: If customer asks for home visit, be honest: "Hum sirf studio mein services dete hain — home visit available nahi hai. Aap studio visit karein, Garima ma'am personally dekhti hain."
-
-R5. ONE MESSAGE = ONE TASK. NO REPETITION: Each message has one purpose. Never repeat the same question twice.
-
-TONE & PERSONALITY (v2.4 UPDATE):
-- Warm, professional, conversational (like talking to a friend who's an expert)
-- NO scripted phrases: "Bilkul samjha", "Main samjhti hoon", "Maine dekha"
-- Natural observations: "That explains a lot", "Here's what I notice", "Got it"
-- Show knowledge naturally without forcing it
-- Always end with a question to keep dialogue flowing
-- Short messages (2-3 sentences typical)
-- No pressure tactics - build trust through honesty
-- Acknowledge customer's concerns genuinely
-
-ENRICHMENT RULES:
-E1. EMOTIONAL MIRROR: Occasionally mirror wedding excitement. "Shaadi ki tayaari mein itna kuch hota hai na — skin ka dhyan rakhnaa sabse zaroori hota hai 😊"
-E2. OPEN-ENDED QUESTIONS: Never yes/no. "Aapki skin subah uthke kaisi lagti hai — tight/dry, oily, ya mixed?"
-E3. CURIOSITY HOOK (pre-bridal): "Aapne pehle kabhi koi bridal facial ya skin treatment try ki hai?"
-E4. SOFT REPLY HANDLING: "ok", "hmm", "thik hai" → treat as green light, move forward gently.
-E5. EXCITEMENT ANGLE: "Shaadi ke din aapki skin ekdum glow kare — yahi toh hamara kaam hai 🌸"
-E6. PERSONALISED TIPS: Tie tips to what they told you.
-
-═══════════════════════════════════════
-PATH A — PRE-BRIDAL PACKAGE
-═══════════════════════════════════════
-CONVERSATION FLOW:
-1. Greet by first name → ask wedding date + city
-2. Ask skin type (open-ended)
-3. CURIOSITY HOOK — "Aapne pehle koi treatment try ki hai?"
-4. Share 2-3 personalised tips based on skin type
-5. Share package info
-6. Close via Path A (advance) or Path B (studio visit)
-
-WHEN ASKED about services:
-*Pre-Bridal Package — 12 Services in 3 Sittings*
-*1. O3+ Facial* — 2 sittings
-*2. Bleach / D-Tan* — 2 sittings
-*3. Full Body Bleach*
-*4. Full Body Wax*
-*5. Full Body Polishing*
-*6. L'Oreal Hair Spa*
-*7. Manicure*
-*8. Pedicure*
-*9. Nail Extension*
-*10. Face Bleach*
-*11. Threading & Upper Lips*
-*12. O3+ Facial* — repeat in 3rd sitting
-All in just *Rs.7,499* — limited slots only.
-
-WHEN ASKED about price:
-*Why Pay More? See the Difference*
-O3+ Facial x2 — Rs.5,000
-Bleach/D-Tan x2 — Rs.700
-Full Body Bleach — Rs.2,000
-Manicure + Pedicure — Rs.700
-Loreal Hair Spa — Rs.800
-Full Body Wax — Rs.2,000
-Full Body Polishing — Rs.2,000
-Nail Extension — Rs.600
-Threading + Upper Lips — Rs.50
-*Total 12 services — Rs.13,850*
-*Our Package: Rs.7,499 only*
-*You Save: Rs.6,351 — 46% OFF*
-
-PATH A CLOSING (ready to book):
-"A small advance will confirm your slot. Would you like to book it now?"
-If YES: "Garima ma'am aapko abhi QR code share karengi."
-
-PATH B CLOSING (hesitant):
-"Aap ek baar studio visit karein — Garima ma'am personally aapki skin check karengi. Koi pressure nahi.|Kab convenient rahega aapko?"
-
-═══════════════════════════════════════
-COMBO PATH B — PRE-BRIDAL + BRIDAL MAKEUP
-═══════════════════════════════════════
-*Pre-Bridal + Bridal Makeup Combo* 💑
-Pre-Bridal Package (12 services) — Rs.7,499
-Bridal Makeup — Rs.11,000
-Individual total — *Rs.18,499*
-*Combo Price: Rs.16,500*
-*You Save: Rs.1,999* 🎉
-*Bridal Makeup includes:*
-✨ Waterproof & Long-Lasting
-✨ Full Coverage Finish
-✨ Soft Glam Velvety Matte with Glow
-✨ Lashes & Lenses
-✨ Draping + Hairstyle — Complimentary
-
-Then ask: "Aapki wedding kab hai?"
-Based on timing → give appropriate advice.
-Closing: same as Path A/B above.
-
-═══════════════════════════════════════
-HYDRA PATH C — HYDRA FACIAL PACKAGE (v2.4 UPDATED)
-═══════════════════════════════════════
-NATURAL PROFESSIONAL CONVERSATION FLOW:
-
-Step 1: GREET & INTEREST CHECK
-"So dark circles are actually quite common, but the good news is they're completely reversible."
-"What's your main skin concern — dryness, dullness, dark circles, or something else?"
-
-Step 2: UNDERSTAND & VALIDATE
-Based on their answer, explain naturally WHY Hydra helps for THEIR specific concern:
-- Dry skin: "Dry skin loses moisture faster. Hydra replenishes that deep hydration."
-- Dull skin: "Dullness means your skin needs brightening + nourishment. That's exactly what Hydra does."
-- Dark circles: "Dark circles are usually pigmentation + thin skin. Hydra hydrates AND brightens that area."
-- Dark spots: "Pigmentation fades when skin is properly hydrated. Hydra does that naturally."
-
-Step 3: SHARE PACKAGE (NATURALLY)
-"So here's our Hydra Facial Package — single sitting is Rs.999, but 3-sitting package is Rs.2,799 and gives much better results."
-"The 3 sittings are 2-3 weeks apart, so you'll see real transformation."
-
-Step 4: ASK ABOUT TIMELINE
-"When would be convenient for you to start?"
-OR
-"How much time do you have? That helps me suggest the best approach."
-
-Step 5: CLOSE NATURALLY
-If they're ready: "Perfect! Garima ma'am will confirm your slot."
-If hesitant: "You can start with a single sitting to feel the difference, then decide if you want the full package."
-
-KEY HYDRA POINTS:
-- Single: Rs.999 (quick feel)
-- 3-Sitting: Rs.2,799 ⭐ (recommended, 45% better value)
-- Timing: 2-3 weeks apart
-- Results: 60-70% improvement typically
-- No downtime, no complications
-- Safe for all skin types
-
-HYDRA TIPS (share when relevant):
-- Deep hydration restores skin barrier
-- Brightening makes dark areas fade gradually
-- Results are natural, not dramatic overnight
-- Home care (moisturizing + sunscreen) keeps results going
-
-DO NOT:
-❌ Use "Hydra bilkul perfect hai"
-❌ Use "Maine dekha..."
-❌ Push for booking aggressively
-❌ Promise 100% results
-❌ Use exclamation marks excessively
-
-═══════════════════════════════════════
-PATH D — OTHER BEAUTY SERVICES
-═══════════════════════════════════════
-First ask: "Zaroor! Kaunsi service ke baare mein jaanna chahti hain?"
-Then share price from list below based on their question.
-
-FACIALS:
-Basic Facial (Aloevera/Fruit/Papaya) — Rs.549
-Sara D-Tan — Rs.499
-Lotus Natural Glow — Rs.799
-Lotus Anti-Tan — Rs.849
-Sara Banana Facial — Rs.849
-Lotus Hydra Facial — Rs.999
-Oxylife Pro — Rs.999
-Garima/FYC Facial — Rs.1,399
-Lotus Diamond Facial — Rs.1,199
-Premium Facial — Rs.1,599
-O3+ Vitamin Power Brightening — Rs.1,999
-O3+ Vitamin Bridal Glow — Rs.2,199
-
-HAIR CARE:
-Basic Hair Spa — Rs.499
-Loreal Hair Spa — Rs.799
-Hair Trimming — Rs.149
-Blow Dry — Rs.249
-Hair Cut — Rs.249
-Hair Wash + Dry — Rs.149
-Loreal Root Touchup — Rs.649
-Loreal Full Length — Rs.1,299
-Nanoplastia — Rs.2,499
-Keratin — Rs.1,499
-Global Color — Rs.2,499
-Global + Pre-lights — Rs.3,999
-
-CLEANUP:
-Aloevera/Fruit/Papaya — Rs.349
-Sara Banana — Rs.449
-Lotus Natural Glow — Rs.449
-Oxy Professional — Rs.549
-D-Tan — Rs.599
-
-WAXING:
-Brazilian Face Wax — Rs.299
-Honey Full Arms + Underarms — Rs.199
-Honey Full Legs — Rs.299
-Honey Full Body — Rs.1,199
-White Choco Full Arms + Underarms — Rs.299
-White Choco Full Legs — Rs.399
-White Choco Full Body — Rs.1,499
-Rica Full Arms + Underarms — Rs.399
-Rica Full Legs — Rs.599
-Rica Full Body — Rs.1,999
-
-BASIC CARING:
-Arms Polishing — Rs.349
-Full Body Polishing — Rs.1,999
-Manicure — Rs.349
-Pedicure — Rs.349
-Premium Pedicure — Rs.549
-Threading — Rs.30
-Upperlips — Rs.20
-Upperlips (Wax) — Rs.50
-Chin Wax — Rs.50
-Head Massage — Rs.249
-Basic Nail Cut & Cleaning — Rs.100
-
-BLEACH:
-Herbal Bleach — Rs.249
-Back Bleach — Rs.299
-Full Arms Bleach — Rs.299
-Oxylife Bleach — Rs.349
-D-Tan Bleach — Rs.349
-Full Body Bleach — Rs.1,999
-
-MAKEUP:
-Basic Makeup — Rs.1,500
-HD Party Makeup — Rs.2,000
-Cocktail Makeup — Rs.2,000
-Engagement Makeup — Rs.5,100
-Bridal Makeup — Rs.11,000
-HD Makeup (studio) — Rs.1,999
-Silicon HD Makeup — Rs.2,999
-
-NAIL SERVICES:
-Nail Extension — Rs.599
-Gel Nail Paint — Rs.349
-
-After sharing price, ALWAYS ask: "Aur koi service chahiye aapko?"
-Then mention: "Aur agar aap wedding ke liye plan kar rahi hain toh hamara pre-bridal package bhi bahut value deta hai 😊"
-
-═══════════════════════════════════════
-PATH E — FAMILY / HUSBAND APPROVAL NEEDED
-═══════════════════════════════════════
-Triggers: "mummy se poochhna hai", "husband se baat karni hai", "ghar mein poochhna hai"
-
-→ Validate their process. Don't push.
-→ "Bilkul, family ke saath decide karna sahi hai 😊 Aap unhe Garima ma'am ka kaam dikhayein: https://www.instagram.com/garimanagpalmua/"
-→ "Agar koi sawaal ho toh main yahan hoon. Kab tak baat ho jaegi unse?"
-
-═══════════════════════════════════════
-PATH F — WEDDING 2+ MONTHS AWAY / NOT READY
-═══════════════════════════════════════
-Triggers: "6 mahine baad", "8 mahine", "next year", "abhi time hai", "wedding door hai"
-
-→ Do NOT push pre-bridal. Enter nurture mode.
-→ SUGGEST HYDRA as bridge:
-"Abhi time hai — bilkul sahi hai 😊 Lekin is beech mein ek kaam kar sakte hain — *Hydra Facial* try kar sakti hain. Skin ko deeply hydrate aur glow deta hai.|*3-Sitting Package: Rs.2,799* — Results clearly dikhte hain skin mein 🌟"
-
-═══════════════════════════════════════
-PACKAGE TIMING GUIDE
-═══════════════════════════════════════
-- 3+ months away: Start skincare now, package 30-35 days before wedding
-- 1-2 months: Perfect timing, 2-3 sittings
-- Within 40 days: 3 sittings possible, start ASAP
-
-═══════════════════════════════════════
-SKINCARE TIPS
-═══════════════════════════════════════
-- Dry skin: Raw milk raat ko, besan+curd+haldi pack weekly
-- Oily skin: Rose water subah, avoid fried food
-- Normal skin: Warm water+lemon+honey subah, turmeric milk raat ko
-- Hair care: Coconut+castor oil hafte mein 2 baar
-- Dark circles: Almond oil raat ko aankho ke neeche
-
-═══════════════════════════════════════
-METRO TIMES (only when customer asks)
-═══════════════════════════════════════
-- Dwarka: 15 min Pink Line
-- CP: 25 min Yellow Line
-- South Delhi: 35 min Yellow Line
-- Shahdara: 53 min Pink Line
-- Noida: 50 min Blue→Rajiv→Yellow
-STUDIO: Vikaspuri, near Janakpuri West Metro
-Maps: https://share.google/Wg5sfGr9GyYiNuzGB
-Instagram: https://www.instagram.com/garimanagpalmua/
-
-═══════════════════════════════════════
-SPECIAL RULES
-═══════════════════════════════════════
-- Don't understand → move with next logical question
-- Bridal makeup question → "https://www.instagram.com/garimanagpalmua/"
-- Want to call → "Garima ma'am: +91 93542 60517"
-- Price negotiation → "Garima ma'am se baat karein"
-- Slot timing → "Garima ma'am confirm karengi"
-- QR code → NEVER send`;
-
-// ── SEND TEXT ─────────────────────────────────────────────────
-async function sendText(toPhone, text) {
-  try {
-    const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
-    const res = await axios.post(url, { phone_number: toPhone, message_body: text, message_type: "text" });
-    console.log(`✅ Sent to ${toPhone}: "${text.substring(0, 50)}"`);
-    return res.data;
-  } catch (err) {
-    console.error(`❌ Send failed:`, err?.response?.data || err.message);
-  }
-}
-
-// ── CALL CLAUDE ───────────────────────────────────────────────
-async function getAIReply(phone, contextMsg) {
-  addToHistory(phone, "user", contextMsg);
-  const liveInstructions = adminInstructions.length > 0
-    ? "\n\nLIVE INSTRUCTIONS FROM ADMIN:\n" + adminInstructions.map((ins, i) => (i+1) + ". " + ins).join("\n")
-    : "";
-  const res = await axios.post(
-    "https://api.anthropic.com/v1/messages",
-    {
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 300,
-      system: SYSTEM_PROMPT + liveInstructions,
-      messages: getHistory(phone)
-    },
-    { headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" } }
-  );
-  const reply = res.data.content?.[0]?.text || "Ek second.";
-  addToHistory(phone, "assistant", reply);
-  return reply;
-}
-
-// ── PARSE WEBHOOK ─────────────────────────────────────────────
-function parseWebhook(body) {
-  try {
-    const messages = body?.entry?.[0]?.changes?.[0]?.value?.messages;
-    if (messages?.length > 0) {
-      const msg = messages[0];
-      const contacts = body?.entry?.[0]?.changes?.[0]?.value?.contacts || [];
-      const phone = msg?.from || "";
-      const name = contacts[0]?.profile?.name || null;
-
-      if (msg?.type === "interactive") {
-        const interactive = msg.interactive;
-        const selectedId    = interactive?.list_reply?.id    || interactive?.button_reply?.id    || "";
-        const selectedTitle = interactive?.list_reply?.title || interactive?.button_reply?.title || "";
-        return {
-          phone,
-          name,
-          text: selectedId || selectedTitle,
-          hasMedia: false,
-          isInteractive: true,
-          interactiveId: selectedId.toUpperCase(),
-        };
+    // Try to identify message type
+    try {
+      const messages = req.body?.entry?.[0]?.changes?.[0]?.value?.messages;
+      if (messages?.length > 0) {
+        const msg = messages[0];
+        logEntry.type = `INFLOW - ${msg.type} message from customer`;
+        logEntry.from = msg.from;
+        logEntry.messageType = msg.type;
+        logEntry.timestamp_msg = msg.timestamp;
       }
 
-      return {
-        phone,
-        name,
-        text: msg?.text?.body || "",
-        hasMedia: ["image","audio","video","document","sticker"].includes(msg?.type),
-        isInteractive: false,
-      };
-    }
-
-    const phone2 = body?.contact?.phone_number || "";
-    if (phone2) {
-      return {
-        phone: phone2,
-        name: [body?.contact?.first_name, body?.contact?.last_name].filter(Boolean).join(" ") || null,
-        text: body?.message?.body || "",
-        hasMedia: !!body?.message?.media?.type,
-        isInteractive: false,
-      };
-    }
-    return null;
-  } catch (e) { return null; }
-}
-
-// ── WEBHOOK ENDPOINT ──────────────────────────────────────────
-app.post("/webhook", async (req, res) => {
-  try {
-    const parsed = parseWebhook(req.body);
-    if (!parsed?.phone) return;
-    const { phone, name, text, hasMedia, isInteractive, interactiveId } = parsed;
-    if (!text && !hasMedia) return;
-    if (text && text.trim() === "") return;
-
-    const cleanPhone = phone.replace(/\D/g, "");
-    if (cleanPhone.endsWith("9560277217")) {
-      if (!text.toLowerCase().includes("radhya")) {
-        console.log(`⏭️ Admin message ignored (no Radhya trigger): "${text.substring(0, 60)}"`);
-        res.sendStatus(200);
-        return;
+      const statuses = req.body?.entry?.[0]?.changes?.[0]?.value?.statuses;
+      if (statuses?.length > 0) {
+        const status = statuses[0];
+        logEntry.type = `STATUS UPDATE - Message sent/delivered/read`;
+        logEntry.status = status.status;
+        logEntry.messageId = status.id;
       }
-      if (!adminTrainerActive) {
-        adminTrainerActive = true;
-        console.log(`🔓 Admin trainer mode ACTIVATED`);
-        await sendText(phone, `Trainer mode activated. Main sun rahi hoon Radhya ke roop mein. Instruction dijiye.`);
-        return;
-      }
-      const instruction = text.replace(/radhya[,.]?\s*/i, "").trim();
-      
-      if (instruction.toLowerCase().includes("enable auto")) {
-        const match = instruction.match(/(\d{10,})/);
-        if (match) {
-          const targetPhone = match[1];
-          manualOnlyChats.delete(targetPhone);
-          console.log(`🤖 AUTO MODE ENABLED for ${targetPhone}`);
-          await sendText(phone, `Auto mode enabled for ${targetPhone}. Bot will now respond to their messages.`);
-          return;
-        }
-      }
-
-      if (instruction) {
-        adminInstructions.push(instruction);
-        if (adminInstructions.length > 5) adminInstructions.shift();
-        console.log(`👨‍💼 ADMIN INSTRUCTION: "${instruction}"`);
-        await sendText(phone, `Samajh gayi. Instruction noted: "${instruction.substring(0, 80)}"`);
-      }
-      return;
+    } catch (e) {
+      logEntry.parseError = e.message;
     }
 
-    const isNewLead  = isMetaLead(text);
-    const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
-    const followupData = !hasHistory && !isNewLead ? await isInFollowupSent(phone) : null;
-
-    if (!isNewLead && !hasHistory && !followupData) {
-      console.log(`⏭️ Ignored: ${phone}`);
-      return;
-    }
-
-    if (hasMedia && !text) {
-      await sendText(phone, "Text mein likhein please.");
-      return;
-    }
-
-    lastMessageTime.set(phone, Date.now());
-    nudgeSent.set(phone, false);
-
-    if (manualOnlyChats.has(phone)) {
-      console.log(`📝 MANUAL MODE: ${phone} — bot will not respond.`);
-      await addToHistory(phone, "user", text);
-      const extractedDate = extractWeddingDateFromChat(text);
-      const extractedLocation = extractLocationFromChat(text);
-      
-      const updates = { lastMsg: text };
-      if (extractedDate) {
-        updates.wedding = extractedDate;
-        console.log(`📅 Wedding date extracted: "${extractedDate}" for ${phone}`);
+    // Append to log file
+    try {
+      let logs = [];
+      if (fs.existsSync(logFile)) {
+        const existing = fs.readFileSync(logFile, 'utf8');
+        logs = JSON.parse(existing);
       }
-      if (extractedLocation) {
-        updates.city = extractedLocation;
-        console.log(`📍 Location extracted: "${extractedLocation}" for ${phone}`);
-      }
-      await updateActiveLead(phone, updates);
-      res.sendStatus(200);
-      return;
-    }
-    if (isNewLead) {
-      const lead = isAdDM(text) ? {} : extractLeadDetails(text);
-      const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
-      const source = isAdDM(text) ? "Ad DM" : "Meta Form";
-
-      console.log(`🎯 NEW LEAD: ${firstName || "unknown"} | ${phone} | ${source}`);
-
-      await addActiveLead(phone, firstName, lead.wedding, lead.city, source, "🆕 New Lead", text);
-
-      await new Promise(r => setTimeout(r, 2000));
-      await sendMenuButtons(phone);
-      pendingMenuSelect.add(phone);
-
-      conversations.set(phone, []);
-      addToHistory(phone, "assistant", MENU_TEXT_FALLBACK);
-      return;
-    }
-
-    if (pendingMenuSelect.has(phone)) {
-      const selection = isInteractive
-        ? (interactiveId || "")
-        : detectMenuSelection(text);
-
-      if (selection && ["A","B","C","D","E"].includes(selection)) {
-        pendingMenuSelect.delete(phone);
-        customerPath.set(phone, selection);
-
-        const existingHistory = getHistory(phone);
-        const storedLead = { name: "", wedding: "", city: "" };
-
-        console.log(`✅ PATH ${selection} selected by ${phone}`);
-
-        const pathLabels = {
-          "A": "Pre-Bridal Package",
-          "B": "Pre Bridal+Makeup",
-          "C": "Hydra Package",
-          "D": "Other Services",
-          "E": "Nail Services",
-        };
-        await updateActiveLead(phone, {
-          status: `📂 ${pathLabels[selection]}`,
-          servicePath: pathLabels[selection],
-        });
-
-        const contextMsg = buildPathContext(selection, storedLead.name, storedLead.wedding, storedLead.city, text);
-        const reply = await getAIReply(phone, contextMsg);
-        const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
-
-        await new Promise(r => setTimeout(r, 3000));
-        for (let i = 0; i < parts.length; i++) {
-          if (i > 0) await new Promise(r => setTimeout(r, 1800));
-          await sendText(phone, parts[i]);
-          lastSentMessage.set(phone, parts[i]);
-        }
-        return;
-      } else {
-        await sendText(phone, "Aap *A, B, C, D ya E* reply karein — main help kar sakti hoon 😊");
-        return;
-      }
-    }
-
-    let contextMsg = text;
-    if (followupData) {
-      const firstName = followupData.name ? followupData.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
-      console.log(`📤 FOLLOWUP REPLY: ${firstName} (${phone})`);
-      await markFollowupReplied(phone);
-      await addActiveLead(phone, firstName, followupData.wedding, followupData.city, "Followup", "🆕 New Lead", text);
-      contextMsg = `Customer replied to our outreach: "${text}"
-Name: ${firstName || "not given"}, Wedding: ${followupData.wedding || "not mentioned"}, City: ${followupData.city || "not mentioned"}
-INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT introduce yourself.`;
-    }
-
-    const reply = await getAIReply(phone, contextMsg);
-    const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
-
-    await new Promise(r => setTimeout(r, 5500));
-
-    const lastSent = lastSentMessage.get(phone) || "";
-    for (let i = 0; i < parts.length; i++) {
-      if (parts[i] === lastSent && i === 0) continue;
-      if (i > 0) await new Promise(r => setTimeout(r, 1800));
-      await sendText(phone, parts[i]);
-      lastSentMessage.set(phone, parts[i]);
-    }
-
-    const extractedDate = extractWeddingDateFromChat(text);
-    const extractedLocation = extractLocationFromChat(text);
-    
-    if (extractedDate || extractedLocation) {
-      const updates = { lastMsg: text, status: detectStatus(reply, text) };
-      if (extractedDate) {
-        updates.wedding = extractedDate;
-        console.log(`📅 Wedding date extracted: "${extractedDate}" for ${phone}`);
-      }
-      if (extractedLocation) {
-        updates.city = extractedLocation;
-        console.log(`📍 Location extracted: "${extractedLocation}" for ${phone}`);
-      }
-      await updateActiveLead(phone, updates);
-    } else {
-      const status = detectStatus(reply, text);
-      await updateActiveLead(phone, { lastMsg: text, status });
+      logs.push(logEntry);
+      // Keep only last 100 entries
+      if (logs.length > 100) logs = logs.slice(-100);
+      fs.writeFileSync(logFile, JSON.stringify(logs, null, 2));
+      console.log(`📋 [${timestamp}] Webhook logged: ${logEntry.type}`);
+    } catch (err) {
+      console.error("❌ Failed to write log:", err.message);
     }
 
     res.sendStatus(200);
-
   } catch (err) {
-    console.error("❌ Webhook error:", err?.response?.data || err.message);
+    console.error("❌ Diagnostic webhook error:", err);
     res.sendStatus(200);
   }
 });
 
-// ── ADMIN PANEL ───────────────────────────────────────────────
-app.get("/admin", (req, res) => {
-  const defaultMsg = `We have received your inquiry on our advertisement for Pre-Bridal Package. Please let us know your marriage date and location.\n\nRegards,\nBeauty Box Makeup Studio by Garima Nagpal`;
-  res.setHeader("Content-Type", "text/html");
-  res.send(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Beauty Box Admin v2.4</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}button.secondary{background:#555;margin-top:8px}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="container"><div class="card"><h2>New Chat</h2><p>Send opening message and start bot</p><label>Phone number (with country code, no +)</label><input id="ph" type="tel" placeholder="919999999999"><label>Customer name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message <span style="font-weight:400;color:#aaa">(editable)</span></label><textarea id="omsg">${defaultMsg}</textarea><div class="hint">Edit before sending. Bot takes over after customer replies.</div><label>Admin key</label><input id="ky" type="password" placeholder="Enter admin key"><button onclick="goNew(true)">Send Message &amp; Activate Bot</button><button class="secondary" onclick="goNew(false)">Activate Bot Only</button><div class="msg" id="msg1"></div><small>Bot handles all replies automatically (v2.4 - Natural Female Tone)</small></div><div class="card"><h2>Reactivate Customer</h2><p>Load customer history & continue conversation</p><label>Customer phone (with country code, no +)</label><input id="rph" type="tel" placeholder="919999999999"><label>Follow-up message <span style="font-weight:400;color:#aaa">(optional)</span></label><textarea id="rmsg" placeholder="Warm message to re-engage customer...">Got it, dry skin. That explains a lot, actually. The issue with dry skin under the eyes is that the area loses moisture much faster than other parts of your face. How long have you been dealing with the dark circles?</textarea><div class="hint">Leave blank to just reactivate without sending message.</div><label>Admin key</label><input id="rky" type="password" placeholder="Enter admin key"><button onclick="goReactivate()">Reactivate &amp; Continue</button><div class="msg" id="msg2"></div><small>Bot will read their history and resume conversation (v2.4 - Professional Tone)</small></div></div><script>async function goNew(sendMsg){const ph=document.getElementById('ph').value.trim();const nm=document.getElementById('nm').value.trim();const ky=document.getElementById('ky').value.trim();const om=document.getElementById('omsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:sendMsg?om:'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh(sendMsg?'Sent to '+ph+'. Bot activated!':'Bot activated for '+ph,'ok','msg1');document.getElementById('ph').value='';document.getElementById('nm').value='';}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}async function goReactivate(){const ph=document.getElementById('rph').value.trim();const ky=document.getElementById('rky').value.trim();const rmsg=document.getElementById('rmsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg2');return;}try{const r=await fetch('/admin/reactivate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,key:ky,message:rmsg})});const d=await r.json();if(d.success){sh('✅ '+d.message,'ok','msg2');document.getElementById('rph').value='';document.getElementById('rmsg').value='';}else sh(d.error||'Error','err','msg2');}catch(e){sh('Network error','err','msg2');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}document.getElementById('ky').addEventListener('keydown',e=>{if(e.key==='Enter')goNew(true);});document.getElementById('rky').addEventListener('keydown',e=>{if(e.key==='Enter')goReactivate();});</script></body></html>`);
-});
-
-app.post("/admin/start", async (req, res) => {
-  const { phone, name, key } = req.body;
-  if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
-  if (!phone) return res.json({ success: false, error: "Phone number required" });
+// Add this endpoint to VIEW the logs
+app.get("/webhook-logs", (req, res) => {
   try {
-    const sendMsg = req.body.sendMessage !== false;
-    const firstName = name ? name.trim().split(" ")[0] : "";
+    const fs = require('fs');
+    const path = require('path');
+    const logFile = path.join(__dirname, 'webhook-logs.json');
 
-    if (sendMsg && req.body.openingMessage) {
-      const openingMsg = req.body.openingMessage.trim();
-      await new Promise(r => setTimeout(r, 1000));
-      await sendText(phone, openingMsg);
-      addToHistory(phone, "assistant", openingMsg);
-      manualOnlyChats.add(phone);
-      lastMessageTime.set(phone, Date.now());
-      nudgeSent.set(phone, false);
-      await addActiveLead(phone, firstName, "", "", "Admin Initiated", "💬 Conversation Started", openingMsg);
-      console.log(`🚀 ADMIN: Message sent for ${phone} — MANUAL MODE active`);
-    } else {
-      conversations.set(phone, []);
-      addToHistory(phone, "assistant", "Admin activated this number.");
-      manualOnlyChats.add(phone);
-      lastMessageTime.set(phone, Date.now());
-      nudgeSent.set(phone, false);
-      await addActiveLead(phone, firstName, "", "", "Admin Activated", "🆕 New Lead", "Manually activated");
-      console.log(`📋 ADMIN: Activated ${phone} — MANUAL MODE active`);
-    }
-    res.json({ success: true });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
-});
-
-app.post("/admin/reactivate", async (req, res) => {
-  const { phone, key, message } = req.body;
-  if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
-  if (!phone) return res.json({ success: false, error: "Phone number required" });
-  
-  try {
-    const customerData = await getCustomerData(phone);
-    if (!customerData) {
-      return res.json({ success: false, error: "Customer not found in records" });
+    if (!fs.existsSync(logFile)) {
+      return res.json({ 
+        message: "No logs yet. Test webhook by:",
+        step1: "Point wapi.in.net webhook to: https://your-railway-url/webhook-diagnostic",
+        step2: "Have customer send a message",
+        step3: "Garima send a manual reply",
+        step4: "Customer reply again",
+        step5: "Check logs here"
+      });
     }
 
-    const firstName = customerData.name ? customerData.name.split(" ")[0] : "Customer";
-    const servicePath = customerData.servicePath || "Unknown";
-
-    console.log(`📞 REACTIVATING: ${firstName} (${phone}) | Path: ${servicePath}`);
-
-    if (!conversations.has(phone)) {
-      conversations.set(phone, []);
-    }
-    const history = getHistory(phone);
+    const logs = JSON.parse(fs.readFileSync(logFile, 'utf8'));
     
-    addToHistory(phone, "system", `[REACTIVATED] Previous path: ${servicePath}. Last status: ${customerData.status}`);
+    // Analyze the logs
+    const analysis = {
+      total: logs.length,
+      inflow: logs.filter(l => l.type.includes("INFLOW")).length,
+      status: logs.filter(l => l.type.includes("STATUS")).length,
+      unknown: logs.filter(l => l.type.includes("UNKNOWN")).length,
+      types: [...new Set(logs.map(l => l.type))],
+      logs: logs
+    };
 
-    manualOnlyChats.delete(phone);
-
-    lastMessageTime.set(phone, Date.now());
-    nudgeSent.set(phone, false);
-
-    let sentMessage = "";
-    if (message && message.trim()) {
-      await sendText(phone, message);
-      addToHistory(phone, "assistant", message);
-      sentMessage = message;
-      console.log(`💬 Reactivation message sent to ${phone}`);
-    }
-
-    res.json({
-      success: true,
-      message: `Reactivated ${firstName}. Previous path: ${servicePath}. Ready to continue conversation.`,
-      customerData: {
-        name: firstName,
-        phone,
-        servicePath,
-        wedding: customerData.wedding,
-        city: customerData.city,
-        lastStatus: customerData.status,
-      }
-    });
+    res.json(analysis);
   } catch (err) {
-    console.error("Reactivate error:", err.message);
-    res.json({ success: false, error: err.message });
+    res.json({ error: err.message });
   }
 });
 
-// ── HEALTH CHECK ──────────────────────────────────────────────
-app.get("/", (req, res) => {
-  res.json({
-    agent: "Beauty Box AI Agent v2.4",
-    tone: "Natural Professional Female Expert",
-    claude: ANTHROPIC_API_KEY ? "OK" : "MISSING",
-    wapi: WAPI_VENDOR_UID ? "OK" : "MISSING",
-    sheets: sheetsClient ? "OK" : "DISABLED",
-    admin: "/admin",
-    activeConversations: conversations.size,
-    pendingMenuSelections: pendingMenuSelect.size,
-    nudgeTracking: lastMessageTime.size,
-  });
-});
-
-// ── DAILY STATUS REPORT ───────────────────────────────────────
-async function sendDailyReport() {
+// Add this endpoint to CLEAR logs
+app.post("/webhook-logs/clear", (req, res) => {
   try {
-    if (!sheetsClient) return;
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "Active Leads!A:I",
-    });
-    const rows = res.data.values || [];
-    const total = Math.max(0, rows.length - 1);
-    let today = 0;
-    const todayStr = new Date().toLocaleDateString("en-IN");
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][7] && rows[i][7].includes(todayStr.split("/")[0])) today++;
+    const fs = require('fs');
+    const path = require('path');
+    const logFile = path.join(__dirname, 'webhook-logs.json');
+    
+    if (fs.existsSync(logFile)) {
+      fs.unlinkSync(logFile);
     }
-    await sendText(ADMIN_PHONE, `🌅 Beauty Box Daily Report\n\n✅ Bot is running fine (v2.4)\n📊 Total leads: ${total}\n📅 New today: ${today}\n💬 Active conversations: ${conversations.size}\n🔔 Nudge tracking: ${lastMessageTime.size} leads\n\nCheck /admin for details.`);
+    
+    res.json({ message: "Logs cleared" });
   } catch (err) {
-    console.error("Daily report error:", err.message);
+    res.json({ error: err.message });
   }
-}
-
-function scheduleDailyReport() {
-  const now = new Date();
-  const istNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  const next9am = new Date(istNow);
-  next9am.setHours(9, 0, 0, 0);
-  if (istNow >= next9am) next9am.setDate(next9am.getDate() + 1);
-  const delay = next9am - istNow;
-  setTimeout(() => {
-    sendDailyReport();
-    setInterval(sendDailyReport, 24 * 60 * 60 * 1000);
-  }, delay);
-  console.log(`📅 Daily report scheduled in ${Math.round(delay/1000/60)} minutes`);
-}
-
-// ── STARTUP ───────────────────────────────────────────────────
-app.listen(PORT, async () => {
-  console.log(`\n🚀 Beauty Box Agent v2.4 on port ${PORT}`);
-  console.log(`✨ Tone: Natural Professional Female Expert`);
-  console.log(`💧 Hydra Path: Updated conversation flow`);
-  console.log(`💅 Nail Services: NEW Path E with professional staff`);
-  console.log(`🔑 Claude:  ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
-  console.log(`📱 WAPI:    ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
-  console.log(`🔐 Token:   ${WAPI_TOKEN ? "OK" : "MISSING"}`);
-  console.log(`📊 Sheet ID: ${SHEET_ID ? "OK" : "MISSING"}`);
-  console.log(`🔒 Admin:   /admin (key: ${ADMIN_KEY})`);
-  await initSheets();
-  scheduleDailyReport();
-  scheduleNudgeCheck();
-  console.log(`🔔 Nudge system: active (24h silence trigger)`);
-  console.log(`📋 Menu system: active (A/B/C/D/E paths)`);
-  console.log(`📍 Location extraction: active`);
-  console.log(`♻️ Reactivate feature: active`);
-  console.log(`✅ All systems ready (v2.4 + Nail Services)\n`);
 });
+
+// ═══════════════════════════════════════════════════════════════
+// TESTING INSTRUCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+/*
+
+HOW TO TEST:
+
+1. DEPLOY this diagnostic code to Railway
+   git add index.js
+   git commit -m "Add webhook diagnostic test"
+   git push
+
+2. GET THE DIAGNOSTIC ENDPOINT
+   https://your-railway-url/webhook-logs
+
+3. CONFIGURE WAPI.IN.NET TO SEND TO DIAGNOSTIC
+   Go to wapi.in.net settings
+   Change webhook URL to: https://your-railway-url/webhook-diagnostic
+   (Use THIS instead of /webhook temporarily)
+
+4. RUN TEST SEQUENCE:
+   
+   Step A: Clear old logs
+   POST to: https://your-railway-url/webhook-logs/clear
+   
+   Step B: Send test messages
+   - Customer sends: "Hello bot"
+   - Garima manually replies: "Hi! This is Garima"
+   - Customer replies: "Thanks!"
+   
+   Step C: Check logs
+   GET: https://your-railway-url/webhook-logs
+   
+   ANALYZE RESULTS:
+   - Do you see INFLOW messages from customer? ✓
+   - Do you see STATUS messages when Garima sends? 
+   - Do you see anything showing Garima's manual message?
+
+5. WHAT TO LOOK FOR:
+   
+   ✅ INFLOW MESSAGE (customer):
+   {
+     "type": "INFLOW - text message from customer",
+     "from": "919999999999",
+     "messageType": "text"
+   }
+
+   ❓ OUTFLOW MESSAGE (Garima):
+   {
+     "type": "STATUS UPDATE - Message sent/delivered/read",
+     "status": "sent",
+     "messageId": "wamid..."
+   }
+   
+   OR
+   
+   {
+     "type": "INFLOW - text message from customer",
+     "from": "919354260517"  ← Would be from Garima's number
+   }
+
+6. SHARE THE RESULTS:
+   POST the /webhook-logs JSON output back to me
+
+*/
+
+// ═══════════════════════════════════════════════════════════════
+// AFTER TESTING: Switch back to real webhook
+// ═══════════════════════════════════════════════════════════════
+
+/*
+Once testing is complete:
+1. Switch wapi.in.net webhook back to: /webhook
+2. Remove this diagnostic code
+3. We'll know for sure if Garima's messages appear in webhook
+*/
