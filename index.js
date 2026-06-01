@@ -45,10 +45,10 @@ async function initSheets() {
 
 async function ensureHeaders() {
   try {
-    const activeHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Status", "Last Message", "First Seen", "Last Updated", "Service Path"];
+    const activeHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Status", "Last Message", "First Seen", "Last Updated", "Service Path", "Bot Intervention"];
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: "Active Leads!A1:J1",
+      range: "Active Leads!A1:K1",
       valueInputOption: "RAW",
       resource: { values: [activeHeaders] },
     });
@@ -74,7 +74,7 @@ async function getCustomerData(phone) {
     
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
+      range: `Active Leads!A${row}:K${row}`,
     });
     const current = res.data.values?.[0];
     if (!current) return null;
@@ -88,6 +88,7 @@ async function getCustomerData(phone) {
       status: current[5] || "",
       lastMessage: current[6] || "",
       servicePath: current[9] || "",
+      botIntervention: current[10] || "YES",
     };
   } catch (err) {
     console.error("getCustomerData error:", err.message);
@@ -130,7 +131,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
     }
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: "Active Leads!A:J",
+      range: "Active Leads!A:K",
       valueInputOption: "RAW",
       resource: {
         values: [[
@@ -139,6 +140,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
           (lastMsg || "").substring(0, 200),
           nowIST(), nowIST(),
           "",
+          "YES",
         ]],
       },
     });
@@ -155,9 +157,9 @@ async function updateActiveLead(phone, updates) {
     if (row < 1) return;
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
+      range: `Active Leads!A${row}:K${row}`,
     });
-    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", ""];
+    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", "", ""];
     const updated = [
       current[0] || phone,
       updates.name    || current[1] || "",
@@ -169,10 +171,11 @@ async function updateActiveLead(phone, updates) {
       current[7] || nowIST(),
       nowIST(),
       updates.servicePath || current[9] || "",
+      updates.botIntervention || current[10] || "YES",
     ];
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
+      range: `Active Leads!A${row}:K${row}`,
       valueInputOption: "RAW",
       resource: { values: [updated] },
     });
@@ -336,12 +339,23 @@ let   adminTrainerActive = false;
 
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
-  return conversations.get(phone);
+  const h = conversations.get(phone);
+  // Keep only last 5 messages (was 10) to reduce token usage
+  if (h.length > 5) {
+    return h.slice(-5);
+  }
+  return h;
 }
 function addToHistory(phone, role, content) {
+  // Check for repetition - don't add if same message just sent
   const h = getHistory(phone);
-  h.push({ role, content });
-  if (h.length > 10) h.splice(0, h.length - 10);
+  if (h.length > 0 && h[h.length - 1].role === role && h[h.length - 1].content === content) {
+    return;
+  }
+  const fullHistory = conversations.get(phone) || [];
+  fullHistory.push({ role, content });
+  if (fullHistory.length > 5) fullHistory.splice(0, fullHistory.length - 5);
+  conversations.set(phone, fullHistory);
 }
 
 // ── MENU SYSTEM ───────────────────────────────────────────────
@@ -353,13 +367,13 @@ const MENU_TEXT_FALLBACK = `Welcome to *Beauty Box Makeup Studio* 💄
 
 Aap kaunsi service ke baare mein jaanna chahti hain?
 
-*A* — Pre-Bridal Package
-*B* — Pre Bridal+Makeup
-*C* — Hydra Package
-*D* — Other Services
+*A* — Beauty and Hair Services
+*B* — Hydra Package
+*C* — Pre-Bridal Package
+*D* — Pre Bridal+ Bridal Makeup Combo
 *E* — Nail Services
 
-Reply *A, B, C, D ya E* karein 😊`;
+Reply A, B, C, D ya E karein`;
 
 async function sendMenuButtons(toPhone) {
   try {
@@ -375,10 +389,10 @@ async function sendMenuButtons(toPhone) {
           sections: [{
             title: "Beauty Box Services",
             rows: [
-              { id: "A", title: "Pre-Bridal Package",    description: "12 services, 3 sittings" },
-              { id: "B", title: "Pre Bridal+Makeup",     description: "Complete bridal combo" },
-              { id: "C", title: "Hydra Package",         description: "Deep hydration facials" },
-              { id: "D", title: "Other Services",        description: "Waxing, hair, nails & more" },
+              { id: "A", title: "Beauty and Hair Services", description: "Waxing, facials, hair care" },
+              { id: "B", title: "Hydra Package",         description: "Deep hydration facials" },
+              { id: "C", title: "Pre-Bridal Package",    description: "12 services, 3 sittings" },
+              { id: "D", title: "Pre Bridal+ Bridal Makeup", description: "Complete bridal combo" },
               { id: "E", title: "Nail Services",         description: "₹499 launch offer" }
             ]
           }]
@@ -396,11 +410,11 @@ async function sendMenuButtons(toPhone) {
 
 function detectMenuSelection(text) {
   const t = (text || "").trim().toLowerCase();
-  if (t === "a" || t === "1" || t.includes("pre-bridal") || t.includes("pre bridal")) return "A";
-  if (t === "b" || t === "2" || t.includes("combo") || (t.includes("bridal") && t.includes("makeup"))) return "B";
-  if (t === "c" || t === "3" || t.includes("hydra")) return "C";
+  if (t === "a" || t === "1" || t.includes("beauty") || t.includes("hair") || t.includes("wax")) return "A";
+  if (t === "b" || t === "2" || t.includes("hydra")) return "B";
+  if (t === "c" || t === "3" || t.includes("pre-bridal") || t.includes("pre bridal")) return "C";
+  if (t === "d" || t === "4" || (t.includes("bridal") && t.includes("makeup")) || t.includes("combo")) return "D";
   if (t === "e" || t === "5" || t.includes("nail")) return "E";
-  if (t === "d" || t === "4" || t.includes("other") || t.includes("beauty service") || t.includes("wax") || t.includes("facial") || t.includes("hair")) return "D";
   return null;
 }
 
@@ -408,55 +422,38 @@ function buildPathContext(selectedPath, customerName, wedding, city, customerMsg
   const name = customerName || "not given";
   switch (selectedPath) {
     case "A":
-      return `Customer selected: Pre-Bridal Package.
+      return `Customer selected: Beauty and Hair Services.
 Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
 Customer message: "${customerMsg}"
-INSTRUCTION: Follow pre-bridal flow. Ask wedding date if not known, then skin type (open-ended), curiosity hook, tips, package details, then closing Path A or B.
-Use polite English first then Hinglish. NEVER use tum/tumhara.`;
+INSTRUCTION: Ask which specific service - waxing, facial, hair care, etc. Share relevant price. Keep it short, 2-3 lines max.
+Use polite English. Keep conversation natural and brief.`;
 
     case "B":
-      return `Customer selected: Pre-Bridal + Bridal Makeup Combo.
-Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
-Customer message: "${customerMsg}"
-INSTRUCTION: Follow COMBO PATH B. Share combo pricing. Ask wedding date to assess timing. Then closing.
-Use polite English first then Hinglish.`;
-
-    case "C":
       return `Customer selected: Hydra Facial Package.
 Name: ${name}
 Customer message: "${customerMsg}"
-INSTRUCTION: HYDRA PATH C - Natural Professional Flow:
-1. Greet warmly: "Perfect! Hydra Facial is amazing for skin hydration and glow."
-2. Ask about skin concern (open-ended): "What's your main skin concern — dryness, dullness, dark circles, or sensitivity?"
-3. When they answer, explain naturally why Hydra helps for THEIR concern (not generic)
-4. Share package info naturally: Single Rs.999 / 3-Sitting Rs.2,799
-5. Ask about convenience: "When would be convenient for you to start?"
-6. Close naturally: "Garima ma'am will confirm your slot."
-Key: NO scripted phrases. Sound like a real skin expert. Always end with question. Short messages (2-3 sentences).`;
+INSTRUCTION: Ask skin concern (dryness, dullness, dark circles). Explain why Hydra helps. Share: Single Rs.999 / 3-Sitting Rs.2,799. Short message, 2-3 lines.`;
+
+    case "C":
+      return `Customer selected: Pre-Bridal Package.
+Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
+Customer message: "${customerMsg}"
+INSTRUCTION: Ask wedding date if not known. Share package briefly. Close for booking. Short message, 2-3 lines.`;
 
     case "D":
-      return `Customer selected: Other Beauty Services.
-Name: ${name}
+      return `Customer selected: Pre-Bridal + Bridal Makeup Combo.
+Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}
 Customer message: "${customerMsg}"
-INSTRUCTION: Follow PATH D. Ask which specific service they're looking for, then share the price from the complete price list.
-Use polite English first then Hinglish.`;
+INSTRUCTION: Share combo pricing naturally. Ask when ready. Short, 2-3 lines. No repetition.`;
 
     case "E":
       return `Customer selected: Nail Services.
 Name: ${name}
 Customer message: "${customerMsg}"
-INSTRUCTION: NAIL SERVICES PATH E - Natural Professional Flow:
-1. Ask about nail service experience: "Have you done [service] before?"
-2. Trust builder: Share experience - "We've done 100+ nail services. Premium quality, no damage, 3-4 weeks lasting!"
-3. Ask location: "Where are you located?"
-4. Present offer: "₹499 for ANY nail service!" (Normal: Rs.1,200-1,500)
-5. Booking: "Direct studio visit, call Garima ma'am, or still thinking?"
-6. Confirm slot: Share location, date, time
-TONE: Warm, professional. Professional nail staff handles services. We will give aftercare tips.
-CLOSING: "Our professional nail team will take great care of you. We will give aftercare tips to keep nails perfect!"`;
+INSTRUCTION: Ask nail service experience. Share offer: Rs.499. Ask location. Short, natural, 2-3 lines max.`;
 
     default:
-      return `Customer message: "${customerMsg}". Name: ${name}. Respond naturally and help them.`;
+      return `Customer message: "${customerMsg}". Name: ${name}. Respond naturally, short reply.`;
   }
 }
 
@@ -483,305 +480,105 @@ function scheduleNudgeCheck() {
   }, 30 * 60 * 1000);
 }
 
-// ── UPDATED SYSTEM PROMPT v2.4 - NATURAL PROFESSIONAL FEMALE TONE ──
-const SYSTEM_PROMPT = `You are Radhya, a professional skin specialist at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi (near Janakpuri West Metro).
+// ── UPDATED SYSTEM PROMPT v2.5 - SHORT, EFFICIENT, NO REPETITION ──
+const SYSTEM_PROMPT = `You are Radhya, a professional skin specialist at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi.
 
-You chat with customers who enquired about our services via Instagram/Facebook ads.
+CRITICAL RULES (NON-NEGOTIABLE):
 
-CRITICAL CONVERSATION RULES (NEVER BREAK THESE):
+R1. MESSAGE LENGTH: ALWAYS keep messages to 2-3 lines MAXIMUM. No long paragraphs.
 
-R1. CHECK HISTORY BEFORE ASKING: Before asking ANY question, check if customer already answered it in this conversation. NEVER ask again.
+R2. NO REPETITION: Never ask a question you've asked before. Check history first.
 
-R2. NO OVER-ENTHUSIASTIC LANGUAGE: NEVER use fake phrases like "That's so exciting!", "Ohh amazing!", "Wow!" Use neutral warm tone. Max 1 emoji per 2-3 messages.
+R3. ONE MESSAGE = ONE POINT: Don't try to answer + ask + explain in one message. Pick one.
 
-R3. ANSWER CUSTOMER'S QUESTION FIRST: If customer asks anything — answer THAT first. Then ask your next question.
+R4. ANSWER FIRST: If customer asks something, answer it FIRST before asking your next question.
 
-R4. HOME VISIT: If customer asks for home visit, be honest: "Hum sirf studio mein services dete hain — home visit available nahi hai. Aap studio visit karein, Garima ma'am personally dekhti hain."
-
-R5. ONE MESSAGE = ONE TASK. NO REPETITION: Each message has one purpose. Never repeat the same question twice.
-
-TONE & PERSONALITY (v2.4 UPDATE):
-- Warm, professional, conversational (like talking to a friend who's an expert)
-- NO scripted phrases: "Bilkul samjha", "Main samjhti hoon", "Maine dekha"
-- Natural observations: "That explains a lot", "Here's what I notice", "Got it"
-- Show knowledge naturally without forcing it
-- Always end with a question to keep dialogue flowing
-- Short messages (2-3 sentences typical)
-- No pressure tactics - build trust through honesty
-- Acknowledge customer's concerns genuinely
-
-ENRICHMENT RULES:
-E1. EMOTIONAL MIRROR: Occasionally mirror wedding excitement. "Shaadi ki tayaari mein itna kuch hota hai na — skin ka dhyan rakhnaa sabse zaroori hota hai 😊"
-E2. OPEN-ENDED QUESTIONS: Never yes/no. "Aapki skin subah uthke kaisi lagti hai — tight/dry, oily, ya mixed?"
-E3. CURIOSITY HOOK (pre-bridal): "Aapne pehle kabhi koi bridal facial ya skin treatment try ki hai?"
-E4. SOFT REPLY HANDLING: "ok", "hmm", "thik hai" → treat as green light, move forward gently.
-E5. EXCITEMENT ANGLE: "Shaadi ke din aapki skin ekdum glow kare — yahi toh hamara kaam hai 🌸"
-E6. PERSONALISED TIPS: Tie tips to what they told you.
+TONE:
+- Warm, natural, professional
+- Short. Punchy. Direct.
+- NO fake enthusiasm ("Amazing!", "Exciting!", "Wow!")
+- NO scripted phrases
+- Always end with a question or next step
 
 ═══════════════════════════════════════
-PATH A — PRE-BRIDAL PACKAGE
+
+PATH A — BEAUTY AND HAIR SERVICES
 ═══════════════════════════════════════
-CONVERSATION FLOW:
-1. Greet by first name → ask wedding date + city
-2. Ask skin type (open-ended)
-3. CURIOSITY HOOK — "Aapne pehle koi treatment try ki hai?"
-4. Share 2-3 personalised tips based on skin type
-5. Share package info
-6. Close via Path A (advance) or Path B (studio visit)
-
-WHEN ASKED about services:
-*Pre-Bridal Package — 12 Services in 3 Sittings*
-*1. O3+ Facial* — 2 sittings
-*2. Bleach / D-Tan* — 2 sittings
-*3. Full Body Bleach*
-*4. Full Body Wax*
-*5. Full Body Polishing*
-*6. L'Oreal Hair Spa*
-*7. Manicure*
-*8. Pedicure*
-*9. Nail Extension*
-*10. Face Bleach*
-*11. Threading & Upper Lips*
-*12. O3+ Facial* — repeat in 3rd sitting
-All in just *Rs.7,499* — limited slots only.
-
-WHEN ASKED about price:
-*Why Pay More? See the Difference*
-O3+ Facial x2 — Rs.5,000
-Bleach/D-Tan x2 — Rs.700
-Full Body Bleach — Rs.2,000
-Manicure + Pedicure — Rs.700
-Loreal Hair Spa — Rs.800
-Full Body Wax — Rs.2,000
-Full Body Polishing — Rs.2,000
-Nail Extension — Rs.600
-Threading + Upper Lips — Rs.50
-*Total 12 services — Rs.13,850*
-*Our Package: Rs.7,499 only*
-*You Save: Rs.6,351 — 46% OFF*
-
-PATH A CLOSING (ready to book):
-"A small advance will confirm your slot. Would you like to book it now?"
-If YES: "Garima ma'am aapko abhi QR code share karengi."
-
-PATH B CLOSING (hesitant):
-"Aap ek baar studio visit karein — Garima ma'am personally aapki skin check karengi. Koi pressure nahi.|Kab convenient rahega aapko?"
+Ask: Which service - waxing, facial, hair care?
+Then share relevant price from price list.
+Close naturally.
+Max: 2-3 lines.
 
 ═══════════════════════════════════════
-COMBO PATH B — PRE-BRIDAL + BRIDAL MAKEUP
+PATH B — HYDRA FACIAL PACKAGE
 ═══════════════════════════════════════
-*Pre-Bridal + Bridal Makeup Combo* 💑
-Pre-Bridal Package (12 services) — Rs.7,499
-Bridal Makeup — Rs.11,000
-Individual total — *Rs.18,499*
-*Combo Price: Rs.16,500*
-*You Save: Rs.1,999* 🎉
-*Bridal Makeup includes:*
-✨ Waterproof & Long-Lasting
-✨ Full Coverage Finish
-✨ Soft Glam Velvety Matte with Glow
-✨ Lashes & Lenses
-✨ Draping + Hairstyle — Complimentary
-
-Then ask: "Aapki wedding kab hai?"
-Based on timing → give appropriate advice.
-Closing: same as Path A/B above.
+Ask: Your main skin concern?
+Explain: Why Hydra helps for THAT specific concern.
+Share: Single Rs.999 / 3-Sitting Rs.2,799
+Close: Garima ma'am confirm karengi.
+Max: 2-3 lines per message.
 
 ═══════════════════════════════════════
-HYDRA PATH C — HYDRA FACIAL PACKAGE (v2.4 UPDATED)
+PATH C — PRE-BRIDAL PACKAGE
 ═══════════════════════════════════════
-NATURAL PROFESSIONAL CONVERSATION FLOW:
-
-Step 1: GREET & INTEREST CHECK
-"So dark circles are actually quite common, but the good news is they're completely reversible."
-"What's your main skin concern — dryness, dullness, dark circles, or something else?"
-
-Step 2: UNDERSTAND & VALIDATE
-Based on their answer, explain naturally WHY Hydra helps for THEIR specific concern:
-- Dry skin: "Dry skin loses moisture faster. Hydra replenishes that deep hydration."
-- Dull skin: "Dullness means your skin needs brightening + nourishment. That's exactly what Hydra does."
-- Dark circles: "Dark circles are usually pigmentation + thin skin. Hydra hydrates AND brightens that area."
-- Dark spots: "Pigmentation fades when skin is properly hydrated. Hydra does that naturally."
-
-Step 3: SHARE PACKAGE (NATURALLY)
-"So here's our Hydra Facial Package — single sitting is Rs.999, but 3-sitting package is Rs.2,799 and gives much better results."
-"The 3 sittings are 2-3 weeks apart, so you'll see real transformation."
-
-Step 4: ASK ABOUT TIMELINE
-"When would be convenient for you to start?"
-OR
-"How much time do you have? That helps me suggest the best approach."
-
-Step 5: CLOSE NATURALLY
-If they're ready: "Perfect! Garima ma'am will confirm your slot."
-If hesitant: "You can start with a single sitting to feel the difference, then decide if you want the full package."
-
-KEY HYDRA POINTS:
-- Single: Rs.999 (quick feel)
-- 3-Sitting: Rs.2,799 ⭐ (recommended, 45% better value)
-- Timing: 2-3 weeks apart
-- Results: 60-70% improvement typically
-- No downtime, no complications
-- Safe for all skin types
-
-HYDRA TIPS (share when relevant):
-- Deep hydration restores skin barrier
-- Brightening makes dark areas fade gradually
-- Results are natural, not dramatic overnight
-- Home care (moisturizing + sunscreen) keeps results going
-
-DO NOT:
-❌ Use "Hydra bilkul perfect hai"
-❌ Use "Maine dekha..."
-❌ Push for booking aggressively
-❌ Promise 100% results
-❌ Use exclamation marks excessively
+Ask: Wedding date?
+Share: 12 services in 3 sittings, Rs.7,499
+Close: Book karna hai?
+Max: 2-3 lines.
 
 ═══════════════════════════════════════
-PATH D — OTHER BEAUTY SERVICES
+PATH D — PRE-BRIDAL + BRIDAL MAKEUP COMBO
 ═══════════════════════════════════════
-First ask: "Zaroor! Kaunsi service ke baare mein jaanna chahti hain?"
-Then share price from list below based on their question.
-
-FACIALS:
-Basic Facial (Aloevera/Fruit/Papaya) — Rs.549
-Sara D-Tan — Rs.499
-Lotus Natural Glow — Rs.799
-Lotus Anti-Tan — Rs.849
-Sara Banana Facial — Rs.849
-Lotus Hydra Facial — Rs.999
-Oxylife Pro — Rs.999
-Garima/FYC Facial — Rs.1,399
-Lotus Diamond Facial — Rs.1,199
-Premium Facial — Rs.1,599
-O3+ Vitamin Power Brightening — Rs.1,999
-O3+ Vitamin Bridal Glow — Rs.2,199
-
-HAIR CARE:
-Basic Hair Spa — Rs.499
-Loreal Hair Spa — Rs.799
-Hair Trimming — Rs.149
-Blow Dry — Rs.249
-Hair Cut — Rs.249
-Hair Wash + Dry — Rs.149
-Loreal Root Touchup — Rs.649
-Loreal Full Length — Rs.1,299
-Nanoplastia — Rs.2,499
-Keratin — Rs.1,499
-Global Color — Rs.2,499
-Global + Pre-lights — Rs.3,999
-
-CLEANUP:
-Aloevera/Fruit/Papaya — Rs.349
-Sara Banana — Rs.449
-Lotus Natural Glow — Rs.449
-Oxy Professional — Rs.549
-D-Tan — Rs.599
-
-WAXING:
-Brazilian Face Wax — Rs.299
-Honey Full Arms + Underarms — Rs.199
-Honey Full Legs — Rs.299
-Honey Full Body — Rs.1,199
-White Choco Full Arms + Underarms — Rs.299
-White Choco Full Legs — Rs.399
-White Choco Full Body — Rs.1,499
-Rica Full Arms + Underarms — Rs.399
-Rica Full Legs — Rs.599
-Rica Full Body — Rs.1,999
-
-BASIC CARING:
-Arms Polishing — Rs.349
-Full Body Polishing — Rs.1,999
-Manicure — Rs.349
-Pedicure — Rs.349
-Premium Pedicure — Rs.549
-Threading — Rs.30
-Upperlips — Rs.20
-Upperlips (Wax) — Rs.50
-Chin Wax — Rs.50
-Head Massage — Rs.249
-Basic Nail Cut & Cleaning — Rs.100
-
-BLEACH:
-Herbal Bleach — Rs.249
-Back Bleach — Rs.299
-Full Arms Bleach — Rs.299
-Oxylife Bleach — Rs.349
-D-Tan Bleach — Rs.349
-Full Body Bleach — Rs.1,999
-
-MAKEUP:
-Basic Makeup — Rs.1,500
-HD Party Makeup — Rs.2,000
-Cocktail Makeup — Rs.2,000
-Engagement Makeup — Rs.5,100
-Bridal Makeup — Rs.11,000
-HD Makeup (studio) — Rs.1,999
-Silicon HD Makeup — Rs.2,999
-
-NAIL SERVICES:
-Nail Extension — Rs.599
-Gel Nail Paint — Rs.349
-
-After sharing price, ALWAYS ask: "Aur koi service chahiye aapko?"
-Then mention: "Aur agar aap wedding ke liye plan kar rahi hain toh hamara pre-bridal package bhi bahut value deta hai 😊"
+Share: Combo Rs.16,500 (save Rs.1,999)
+Ask: Wedding kab hai?
+Close: Booking?
+Max: 2-3 lines.
 
 ═══════════════════════════════════════
-PATH E — FAMILY / HUSBAND APPROVAL NEEDED
+PATH E — NAIL SERVICES
 ═══════════════════════════════════════
-Triggers: "mummy se poochhna hai", "husband se baat karni hai", "ghar mein poochhna hai"
-
-→ Validate their process. Don't push.
-→ "Bilkul, family ke saath decide karna sahi hai 😊 Aap unhe Garima ma'am ka kaam dikhayein: https://www.instagram.com/garimanagpalmua/"
-→ "Agar koi sawaal ho toh main yahan hoon. Kab tak baat ho jaegi unse?"
-
-═══════════════════════════════════════
-PATH F — WEDDING 2+ MONTHS AWAY / NOT READY
-═══════════════════════════════════════
-Triggers: "6 mahine baad", "8 mahine", "next year", "abhi time hai", "wedding door hai"
-
-→ Do NOT push pre-bridal. Enter nurture mode.
-→ SUGGEST HYDRA as bridge:
-"Abhi time hai — bilkul sahi hai 😊 Lekin is beech mein ek kaam kar sakte hain — *Hydra Facial* try kar sakti hain. Skin ko deeply hydrate aur glow deta hai.|*3-Sitting Package: Rs.2,799* — Results clearly dikhte hain skin mein 🌟"
+Ask: Service experience?
+Share: Rs.499 offer (normal Rs.1,200-1,500)
+Ask: Location?
+Close: Studio visit?
+Max: 2-3 lines.
 
 ═══════════════════════════════════════
-PACKAGE TIMING GUIDE
+KEY PRICES (Reference Only)
 ═══════════════════════════════════════
-- 3+ months away: Start skincare now, package 30-35 days before wedding
-- 1-2 months: Perfect timing, 2-3 sittings
-- Within 40 days: 3 sittings possible, start ASAP
+Pre-Bridal: Rs.7,499
+Bridal Makeup: Rs.11,000
+Combo: Rs.16,500
+Hydra Single: Rs.999
+Hydra 3-Pack: Rs.2,799
+Nail Services: Rs.499
+Hair Spa: Rs.799
+Facial (basic): Rs.549
 
 ═══════════════════════════════════════
-SKINCARE TIPS
+METRO TIMES (Only if asked)
 ═══════════════════════════════════════
-- Dry skin: Raw milk raat ko, besan+curd+haldi pack weekly
-- Oily skin: Rose water subah, avoid fried food
-- Normal skin: Warm water+lemon+honey subah, turmeric milk raat ko
-- Hair care: Coconut+castor oil hafte mein 2 baar
-- Dark circles: Almond oil raat ko aankho ke neeche
+- Dwarka: 15 min
+- CP: 25 min
+- South Delhi: 35 min
+Studio: Janakpuri West Metro, Vikaspuri
 
 ═══════════════════════════════════════
-METRO TIMES (only when customer asks)
+SPECIAL RESPONSES
 ═══════════════════════════════════════
-- Dwarka: 15 min Pink Line
-- CP: 25 min Yellow Line
-- South Delhi: 35 min Yellow Line
-- Shahdara: 53 min Pink Line
-- Noida: 50 min Blue→Rajiv→Yellow
-STUDIO: Vikaspuri, near Janakpuri West Metro
-Maps: https://share.google/Wg5sfGr9GyYiNuzGB
-Instagram: https://www.instagram.com/garimanagpalmua/
+Home visit: "Studio mein hi services dete hain. Aap aa sakte ho?"
+Still thinking: "Bilkul, soch lo. Main yahan hoon jab decide karo 😊"
+Other info: Short, natural answer. No over-explanation.
 
 ═══════════════════════════════════════
-SPECIAL RULES
+MOST IMPORTANT
 ═══════════════════════════════════════
-- Don't understand → move with next logical question
-- Bridal makeup question → "https://www.instagram.com/garimanagpalmua/"
-- Want to call → "Garima ma'am: +91 93542 60517"
-- Price negotiation → "Garima ma'am se baat karein"
-- Slot timing → "Garima ma'am confirm karengi"
-- QR code → NEVER send`;
+- Keep it SHORT (2-3 lines)
+- NO repetition
+- Natural tone
+- End with question
+- Don't over-explain
+- One idea per message`;
 
 // ── SEND TEXT ─────────────────────────────────────────────────
 async function sendText(toPhone, text) {
@@ -805,7 +602,7 @@ async function getAIReply(phone, contextMsg) {
     "https://api.anthropic.com/v1/messages",
     {
       model: "claude-sonnet-4-20250514",
-      max_tokens: 300,
+      max_tokens: 150,
       system: SYSTEM_PROMPT + liveInstructions,
       messages: getHistory(phone)
     },
@@ -1045,9 +842,33 @@ app.post("/webhook", async (req, res) => {
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
 
+    // ── CHECK GOOGLE SHEETS: Bot Intervention Column ──────────────────
+    const customerData = await getCustomerData(phone);
+    const botIntervention = customerData?.botIntervention || "YES";
+    
+    if (botIntervention === "YES") {
+      console.log(`📝 BOT INTERVENTION = YES: ${phone} — You're handling, bot will not respond.`);
+      await addToHistory(phone, "user", text);
+      const extractedDate = extractWeddingDateFromChat(text);
+      const extractedLocation = extractLocationFromChat(text);
+      
+      const updates = { lastMsg: text };
+      if (extractedDate) {
+        updates.wedding = extractedDate;
+        console.log(`📅 Wedding date extracted: "${extractedDate}" for ${phone}`);
+      }
+      if (extractedLocation) {
+        updates.city = extractedLocation;
+        console.log(`📍 Location extracted: "${extractedLocation}" for ${phone}`);
+      }
+      await updateActiveLead(phone, updates);
+      res.sendStatus(200);
+      return;
+    }
+    
     const normalizedPhone = normalizePhone(phone);
     if (manualOnlyChats.has(normalizedPhone)) {
-      console.log(`📝 MANUAL MODE: ${phone} → ${normalizedPhone} — bot will not respond.`);
+      console.log(`📝 MANUAL MODE (Legacy): ${phone} → ${normalizedPhone} — bot will not respond.`);
       await addToHistory(phone, "user", text);
       const extractedDate = extractWeddingDateFromChat(text);
       const extractedLocation = extractLocationFromChat(text);
@@ -1099,10 +920,10 @@ app.post("/webhook", async (req, res) => {
         console.log(`✅ PATH ${selection} selected by ${phone}`);
 
         const pathLabels = {
-          "A": "Pre-Bridal Package",
-          "B": "Pre Bridal+Makeup",
-          "C": "Hydra Package",
-          "D": "Other Services",
+          "A": "Beauty and Hair Services",
+          "B": "Hydra Package",
+          "C": "Pre-Bridal Package",
+          "D": "Pre Bridal+ Bridal Makeup Combo",
           "E": "Nail Services",
         };
         await updateActiveLead(phone, {
@@ -1112,11 +933,11 @@ app.post("/webhook", async (req, res) => {
 
         const contextMsg = buildPathContext(selection, storedLead.name, storedLead.wedding, storedLead.city, text);
         const reply = await getAIReply(phone, contextMsg);
-        const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
+        const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 2);
 
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 2000));
         for (let i = 0; i < parts.length; i++) {
-          if (i > 0) await new Promise(r => setTimeout(r, 1800));
+          if (i > 0) await new Promise(r => setTimeout(r, 1200));
           await sendText(phone, parts[i]);
           lastSentMessage.set(phone, parts[i]);
         }
@@ -1139,14 +960,14 @@ INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT i
     }
 
     const reply = await getAIReply(phone, contextMsg);
-    const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 3);
+    const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 2);
 
-    await new Promise(r => setTimeout(r, 5500));
+    await new Promise(r => setTimeout(r, 3000));
 
     const lastSent = lastSentMessage.get(phone) || "";
     for (let i = 0; i < parts.length; i++) {
       if (parts[i] === lastSent && i === 0) continue;
-      if (i > 0) await new Promise(r => setTimeout(r, 1800));
+      if (i > 0) await new Promise(r => setTimeout(r, 1200));
       await sendText(phone, parts[i]);
       lastSentMessage.set(phone, parts[i]);
     }
