@@ -825,13 +825,43 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    const isNewLead  = isMetaLead(text);
-    const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
-    const followupData = !hasHistory && !isNewLead ? await isInFollowupSent(phone) : null;
+    // ── PRIMARY CHECK: Google Sheet Bot Intervention Column ────────────────
+    const customerData = await getCustomerData(phone);
+    const isNewLead = isMetaLead(text);
 
-    if (!isNewLead && !hasHistory && !followupData) {
-      console.log(`⏭️ Ignored: ${phone}`);
+    // If customer NOT in Google Sheet AND not a new lead (meta form) → ignore
+    if (!customerData && !isNewLead) {
+      console.log(`⏭️ IGNORED: ${phone} - Not in sheet, not a new lead`);
+      res.sendStatus(200);
       return;
+    }
+
+    // If customer IS in Google Sheet, check Bot Intervention column
+    if (customerData) {
+      const botIntervention = customerData.botIntervention || "YES";
+      
+      if (botIntervention === "YES") {
+        console.log(`📝 BOT INTERVENTION = YES: ${phone} — You're handling, bot will not respond.`);
+        await addToHistory(phone, "user", text);
+        const extractedDate = extractWeddingDateFromChat(text);
+        const extractedLocation = extractLocationFromChat(text);
+        
+        const updates = { lastMsg: text };
+        if (extractedDate) {
+          updates.wedding = extractedDate;
+          console.log(`📅 Wedding date extracted: "${extractedDate}" for ${phone}`);
+        }
+        if (extractedLocation) {
+          updates.city = extractedLocation;
+          console.log(`📍 Location extracted: "${extractedLocation}" for ${phone}`);
+        }
+        await updateActiveLead(phone, updates);
+        res.sendStatus(200);
+        return;
+      }
+      
+      // Bot Intervention = "NO" → Bot can reply
+      console.log(`✅ BOT INTERVENTION = NO: ${phone} — Bot can reply`);
     }
 
     if (hasMedia && !text) {
@@ -842,30 +872,6 @@ app.post("/webhook", async (req, res) => {
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
 
-    // ── CHECK GOOGLE SHEETS: Bot Intervention Column ──────────────────
-    const customerData = await getCustomerData(phone);
-    const botIntervention = customerData?.botIntervention || "YES";
-    
-    if (botIntervention === "YES") {
-      console.log(`📝 BOT INTERVENTION = YES: ${phone} — You're handling, bot will not respond.`);
-      await addToHistory(phone, "user", text);
-      const extractedDate = extractWeddingDateFromChat(text);
-      const extractedLocation = extractLocationFromChat(text);
-      
-      const updates = { lastMsg: text };
-      if (extractedDate) {
-        updates.wedding = extractedDate;
-        console.log(`📅 Wedding date extracted: "${extractedDate}" for ${phone}`);
-      }
-      if (extractedLocation) {
-        updates.city = extractedLocation;
-        console.log(`📍 Location extracted: "${extractedLocation}" for ${phone}`);
-      }
-      await updateActiveLead(phone, updates);
-      res.sendStatus(200);
-      return;
-    }
-    
     const normalizedPhone = normalizePhone(phone);
     if (manualOnlyChats.has(normalizedPhone)) {
       console.log(`📝 MANUAL MODE (Legacy): ${phone} → ${normalizedPhone} — bot will not respond.`);
@@ -949,6 +955,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     let contextMsg = text;
+    const followupData = await isInFollowupSent(phone);
     if (followupData) {
       const firstName = followupData.name ? followupData.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
       console.log(`📤 FOLLOWUP REPLY: ${firstName} (${phone})`);
