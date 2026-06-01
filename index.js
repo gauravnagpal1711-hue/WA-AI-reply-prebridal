@@ -65,8 +65,37 @@ async function ensureHeaders() {
   }
 }
 
-// ── GET CUSTOMER DATA FROM SHEETS ──────────────────────────────
-async function getCustomerData(phone) {
+// ── GOOGLE SHEETS CACHING ─────────────────────────────────
+const sheetCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getCachedCustomerData(phone) {
+  const cacheKey = `customer_${phone}`;
+  const cached = sheetCache.get(cacheKey);
+  
+  // Return cached if still valid
+  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+    return cached.data;
+  }
+  
+  // Fetch from sheets
+  const data = await getCustomerData(phone);
+  
+  // Cache it
+  if (data) {
+    sheetCache.set(cacheKey, {
+      data,
+      timestamp: Date.now()
+    });
+  }
+  
+  return data;
+}
+
+// Clear cache entry when updating
+function clearCustomerCache(phone) {
+  sheetCache.delete(`customer_${phone}`);
+}
   if (!sheetsClient) return null;
   try {
     const row = await findRow("Active Leads", phone);
@@ -179,6 +208,8 @@ async function updateActiveLead(phone, updates) {
       valueInputOption: "RAW",
       resource: { values: [updated] },
     });
+    // Clear cache after update
+    clearCustomerCache(phone);
   } catch (err) {
     console.error("updateActiveLead error:", err.message);
   }
@@ -481,7 +512,7 @@ function scheduleNudgeCheck() {
 }
 
 // ── UPDATED SYSTEM PROMPT v2.5 - SHORT, EFFICIENT, NO REPETITION ──
-const SYSTEM_PROMPT = `You are Radhya, a professional skin specialist at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi.
+const SYSTEM_PROMPT = `You are Radhya (AI-bot), a professional skin specialist at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi.
 
 CRITICAL RULES (NON-NEGOTIABLE):
 
@@ -800,7 +831,7 @@ app.post("/webhook", async (req, res) => {
       if (!adminTrainerActive) {
         adminTrainerActive = true;
         console.log(`🔓 Admin trainer mode ACTIVATED`);
-        await sendText(phone, `Trainer mode activated. Main sun rahi hoon Radhya ke roop mein. Instruction dijiye.`);
+        await sendText(phone, `Trainer mode activated. Main sun rahi hoon Radhya (AI-bot) ke roop mein. Instruction dijiye.`);
         return;
       }
       const instruction = text.replace(/radhya[,.]?\s*/i, "").trim();
@@ -825,8 +856,8 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // ── PRIMARY CHECK: Google Sheet Bot Intervention Column ────────────────
-    const customerData = await getCustomerData(phone);
+    // ── PRIMARY CHECK: Google Sheet Bot Intervention Column (CACHED) ────────────────
+    const customerData = await getCachedCustomerData(phone);
     const isNewLead = isMetaLead(text);
 
     // If customer NOT in Google Sheet AND not a new lead (meta form) → ignore
@@ -941,9 +972,9 @@ app.post("/webhook", async (req, res) => {
         const reply = await getAIReply(phone, contextMsg);
         const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 2);
 
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 500));
         for (let i = 0; i < parts.length; i++) {
-          if (i > 0) await new Promise(r => setTimeout(r, 1200));
+          if (i > 0) await new Promise(r => setTimeout(r, 300));
           await sendText(phone, parts[i]);
           lastSentMessage.set(phone, parts[i]);
         }
@@ -969,12 +1000,12 @@ INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT i
     const reply = await getAIReply(phone, contextMsg);
     const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 2);
 
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise(r => setTimeout(r, 500));
 
     const lastSent = lastSentMessage.get(phone) || "";
     for (let i = 0; i < parts.length; i++) {
       if (parts[i] === lastSent && i === 0) continue;
-      if (i > 0) await new Promise(r => setTimeout(r, 1200));
+      if (i > 0) await new Promise(r => setTimeout(r, 300));
       await sendText(phone, parts[i]);
       lastSentMessage.set(phone, parts[i]);
     }
