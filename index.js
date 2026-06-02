@@ -799,7 +799,7 @@ async function getAIReply(phone, contextMsg) {
     "https://api.anthropic.com/v1/messages",
     {
       model: "claude-sonnet-4-20250514",
-      max_tokens: 150,
+      max_tokens: 450,
       system: SYSTEM_PROMPT + liveInstructions,
       messages: getHistory(phone)
     },
@@ -983,7 +983,7 @@ app.post("/webhook", async (req, res) => {
 
         const contextMsg = buildPathContext(selection, storedLead.name, storedLead.wedding, storedLead.city, text);
         const reply = await getAIReply(phone, contextMsg);
-        const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 2);
+        const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
 
         await new Promise(r => setTimeout(r, 3000));
         for (let i = 0; i < parts.length; i++) {
@@ -1010,7 +1010,7 @@ INSTRUCTION: Greet warmly in polite English. Ask wedding date and area. Do NOT i
     }
 
     const reply = await getAIReply(phone, contextMsg);
-    const parts = reply.split("|").map(p => p.trim()).filter(Boolean).slice(0, 2);
+    const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
 
     await new Promise(r => setTimeout(r, 5500));
 
