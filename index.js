@@ -39,10 +39,10 @@ async function initSheets() {
 
 async function ensureHeaders() {
   try {
-    const activeHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Status", "Last Message", "First Seen", "Last Updated", "Service Path"];
+    const activeHeaders = ["Phone", "Name", "Wedding Date", "City/Area", "Source", "Status", "Last Message", "First Seen", "Last Updated", "Service Path", "Bot Intervention"];
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: "Active Leads!A1:J1",
+      range: "Active Leads!A1:K1",
       valueInputOption: "RAW",
       resource: { values: [activeHeaders] },
     });
@@ -82,6 +82,7 @@ async function getCustomerData(phone) {
       status: current[5] || "",
       lastMessage: current[6] || "",
       servicePath: current[9] || "",
+      botIntervention: current[10] !== undefined ? current[10] : "Yes",
     };
   } catch (err) {
     console.error("getCustomerData error:", err.message);
@@ -89,7 +90,27 @@ async function getCustomerData(phone) {
   }
 }
 
-// ── SHEET HELPERS ─────────────────────────────────────────────
+// ── CHECK BOT INTERVENTION FROM SHEET ────────────────────────
+async function checkBotIntervention(phone) {
+  if (!sheetsClient) return true; // default: bot ON if sheets not connected
+  try {
+    const row = await findRow("Active Leads", phone);
+    if (row < 1) return true; // new lead, bot ON
+    const res = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `Active Leads!K${row}`,
+    });
+    const val = res.data.values?.[0]?.[0] || "Yes";
+    const isOn = val.toString().trim().toLowerCase() !== "no";
+    if (!isOn) console.log(`🚫 Bot Intervention = No for ${phone} — bot skipping reply`);
+    return isOn;
+  } catch (err) {
+    console.error("checkBotIntervention error:", err.message);
+    return true; // fail safe: bot ON
+  }
+}
+
+
 function nowIST() {
   return new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 }
@@ -133,6 +154,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
           (lastMsg || "").substring(0, 200),
           nowIST(), nowIST(),
           "",
+          "Yes",
         ]],
       },
     });
@@ -151,7 +173,7 @@ async function updateActiveLead(phone, updates) {
       spreadsheetId: SHEET_ID,
       range: `Active Leads!A${row}:J${row}`,
     });
-    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", ""];
+    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", "", "Yes"];
     const updated = [
       current[0] || phone,
       updates.name    || current[1] || "",
@@ -163,10 +185,11 @@ async function updateActiveLead(phone, updates) {
       current[7] || nowIST(),
       nowIST(),
       updates.servicePath || current[9] || "",
+      current[10] !== undefined ? current[10] : "Yes", // preserve Bot Intervention
     ];
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
+      range: `Active Leads!A${row}:K${row}`,
       valueInputOption: "RAW",
       resource: { values: [updated] },
     });
@@ -909,6 +932,15 @@ app.post("/webhook", async (req, res) => {
 
     if (!isNewLead && !hasHistory && !followupData) {
       console.log(`⏭️ Ignored: ${phone}`);
+      return;
+    }
+
+    // ── BOT INTERVENTION CHECK ────────────────────────────────
+    const botActive = await checkBotIntervention(phone);
+    if (!botActive) {
+      // Still update last message in sheet silently
+      await updateActiveLead(phone, { lastMsg: text });
+      res.sendStatus(200);
       return;
     }
 
