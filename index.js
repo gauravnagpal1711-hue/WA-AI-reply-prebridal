@@ -12,6 +12,7 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const WAPI_VENDOR_UID   = process.env.WAPI_VENDOR_UID   || "";
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";
 const ADMIN_KEY         = process.env.ADMIN_KEY         || "beautybox2024";
+const BOT_ACTIVE        = false; // Set to true to enable bot replies
 const SHEET_ID          = process.env.SHEET_ID          || "";
 const ADMIN_PHONE       = "919560277217";
 const GARIMA_PHONE      = "919354260517";
@@ -932,6 +933,17 @@ app.post("/webhook", async (req, res) => {
 
     if (!isNewLead && !hasHistory && !followupData) {
       console.log(`⏭️ Ignored: ${phone}`);
+      return;
+    }
+
+    // ── GLOBAL BOT ACTIVE CHECK ───────────────────────────────
+    if (!BOT_ACTIVE) {
+      const lead = isNewLead && !isAdDM(text) ? extractLeadDetails(text) : {};
+      const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
+      const source = isAdDM(text) ? "Ad DM" : (isNewLead ? "Meta Form" : "Followup");
+      await addActiveLead(phone, firstName, lead.wedding || "", lead.city || "", source, "🆕 New Lead", text);
+      console.log(`📋 BOT_ACTIVE=false — Lead recorded, no reply: ${phone}`);
+      res.sendStatus(200);
       return;
     }
 
