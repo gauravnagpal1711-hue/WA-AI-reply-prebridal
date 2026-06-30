@@ -17,6 +17,10 @@ const SHEET_ID          = process.env.SHEET_ID          || "";
 const ADMIN_PHONE       = "919560277217";
 const GARIMA_PHONE      = "919354260517";
 
+// PDF URLs - Upload your PDFs to a public hosting (Google Drive, Dropbox, S3, etc.) and paste URLs here
+const PREBRIDAL_PDF_URL = process.env.PREBRIDAL_PDF_URL || "https://your-hosting-url.com/Prebridal_7499.pdf";
+const PRICELIST_PDF_URL = process.env.PRICELIST_PDF_URL || "https://your-hosting-url.com/price_list.pdf";
+
 let sheetsClient = null;
 async function initSheets() {
   try {
@@ -67,7 +71,7 @@ async function getCustomerData(phone) {
     
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
+      range: `Active Leads!A${row}:K${row}`,
     });
     const current = res.data.values?.[0];
     if (!current) return null;
@@ -89,18 +93,31 @@ async function getCustomerData(phone) {
   }
 }
 
+// CRITICAL: Check Bot Intervention column K BEFORE every reply
 async function checkBotIntervention(phone) {
-  if (!sheetsClient) return true;
+  if (!sheetsClient) {
+    console.log(`Sheets not connected - bot defaults to ON for ${phone}`);
+    return true;
+  }
   try {
     const row = await findRow("Active Leads", phone);
-    if (row < 1) return true;
+    if (row < 1) {
+      console.log(`No row found for ${phone} - new lead, bot defaults to ON`);
+      return true;
+    }
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
       range: `Active Leads!K${row}`,
     });
     const val = res.data.values?.[0]?.[0] || "Yes";
-    const isOn = val.toString().trim().toLowerCase() !== "no";
-    if (!isOn) console.log(`Bot Intervention = No for ${phone} -- bot skipping`);
+    const cleanVal = val.toString().trim().toLowerCase();
+    const isOn = cleanVal === "yes" || cleanVal === "y" || cleanVal === "";
+    
+    if (!isOn) {
+      console.log(`Bot Intervention = "${val}" for ${phone} -- BOT SKIPPING REPLY`);
+    } else {
+      console.log(`Bot Intervention = "${val}" for ${phone} -- BOT REPLYING`);
+    }
     return isOn;
   } catch (err) {
     console.error("checkBotIntervention error:", err.message);
@@ -142,7 +159,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
     }
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: "Active Leads!A:J",
+      range: "Active Leads!A:K",
       valueInputOption: "RAW",
       resource: {
         values: [[
@@ -168,7 +185,7 @@ async function updateActiveLead(phone, updates) {
     if (row < 1) return;
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:J${row}`,
+      range: `Active Leads!A${row}:K${row}`,
     });
     const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", "", "Yes"];
     const updated = [
@@ -193,76 +210,6 @@ async function updateActiveLead(phone, updates) {
   } catch (err) {
     console.error("updateActiveLead error:", err.message);
   }
-}
-
-async function isInFollowupSent(phone) {
-  if (!sheetsClient) return null;
-  try {
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "Followup!A:H",
-    });
-    const rows = res.data.values || [];
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row[0]) continue;
-      const rowPhone = row[0].toString().replace(/\D/g, "");
-      const matchPhone = phone.replace(/\D/g, "");
-      const status = (row[5] || "").toString().toLowerCase();
-      if (rowPhone.endsWith(matchPhone) && (status === "sent" || status === "pending")) {
-        return {
-          rowNum: i + 1,
-          phone: row[0],
-          name: row[1] || "",
-          wedding: row[2] || "",
-          city: row[3] || "",
-          source: row[4] || "Followup",
-        };
-      }
-    }
-    return null;
-  } catch (err) {
-    console.error("isInFollowupSent error:", err.message);
-    return null;
-  }
-}
-
-async function markFollowupReplied(phone) {
-  if (!sheetsClient) return;
-  try {
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "Followup!A:F",
-    });
-    const rows = res.data.values || [];
-    for (let i = 1; i < rows.length; i++) {
-      if (!rows[i][0]) continue;
-      const rowPhone = rows[i][0].toString().replace(/\D/g, "");
-      if (rowPhone.endsWith(phone.replace(/\D/g, ""))) {
-        await sheetsClient.spreadsheets.values.update({
-          spreadsheetId: SHEET_ID,
-          range: `Followup!F${i + 1}`,
-          valueInputOption: "RAW",
-          resource: { values: [["Replied"]] },
-        });
-        console.log(`Marked Followup as Replied: ${phone}`);
-        return;
-      }
-    }
-  } catch (err) {
-    console.error("markFollowupReplied error:", err.message);
-  }
-}
-
-function detectStatus(aiReply, customerMsg) {
-  const reply = (aiReply || "").toLowerCase();
-  const msg   = (customerMsg || "").toLowerCase();
-
-  if (reply.includes("garima")) return "Contact Garima";
-  if (reply.includes("package")) return "Package Shared";
-  if (msg.includes("yes")) return "Interested";
-  if (msg.includes("no")) return "Not Interested";
-  return null;
 }
 
 const META_TRIGGER  = "i filled in your form and would like to know more about your business";
@@ -291,49 +238,12 @@ function extractLeadDetails(text) {
   return d;
 }
 
-function extractWeddingDateFromChat(text) {
-  const months = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec";
-  const patterns = [
-    new RegExp(`(\\d{1,2})\\s*(st|nd|rd|th)?\\s*(${months})\\s*(\\d{2,4})?`, "i"),
-    new RegExp(`(${months})\\s+(\\d{1,2})(\\s*(\\d{2,4}))?`, "i"),
-    /(\d{1,2})[\/\-](\d{1,2})([\/\-](\d{2,4}))?/,
-    new RegExp(`(${months})\\s*(mein|ko|tak|me)?`, "i"),
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) return match[0].trim();
-  }
-  return null;
-}
-
-function extractLocationFromChat(text) {
-  const locations = [
-    "Dwarka", "Noida", "Janakpuri", "Vikaspuri", "Uttam Nagar", "Rajouri Garden",
-    "Greater Noida", "Gurgaon", "Gurugram", "Faridabad", "Delhi", "West Delhi",
-    "South Delhi", "North Delhi", "East Delhi", "Central Delhi", "New Delhi",
-    "Connaught Place", "CP", "Shahdara", "Pitampura", "Defence Colony",
-    "Green Park", "Karol Bagh", "Rohini", "Malviya Nagar", "Sector", "Crossing",
-    "Sector 104", "Sector 105", "Sector 110", "Sector 126"
-  ];
-  
-  const lowerText = text.toLowerCase();
-  for (const location of locations) {
-    if (lowerText.includes(location.toLowerCase())) {
-      return location;
-    }
-  }
-  return null;
-}
-
 const conversations      = new Map();
 const lastSentMessage    = new Map();
 const lastMessageTime    = new Map();
 const nudgeSent          = new Map();
 const pendingMenuSelect  = new Set();
 const customerPath       = new Map();
-const manualOnlyChats    = new Set();
-const adminInstructions  = [];
-let   adminTrainerActive = false;
 
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
@@ -345,10 +255,6 @@ function addToHistory(phone, role, content) {
   h.push({ role, content });
   if (h.length > 10) h.splice(0, h.length - 10);
 }
-
-const MENU_BODY = `Welcome to Beauty Box Makeup Studio
-
-Aap kaunsi service ke baare mein jaanna chahti hain?`;
 
 const MENU_TEXT_FALLBACK = `Welcome to Beauty Box Makeup Studio
 
@@ -387,71 +293,189 @@ function detectMenuSelection(text) {
   return null;
 }
 
+// UPDATED SERVICE RESPONSES - As per actual PDFs
 function getServiceResponse(selection, customerName) {
   const name = customerName ? `${customerName}, ` : "";
   
   switch(selection) {
     case "A":
-      return `${name}Pre-Bridal Package - 12 Services in 3 Sittings for Rs.7,499 (Market value Rs.13,850 - Save Rs.6,351 or 46% OFF). Kab convenient hoga aapko studio visit ke liye? Garima ma'am: +91 93542 60517`;
+      return `${name}*PRE-BRIDAL PACKAGE - Rs.7,499* (Market Value Rs.16,800 - Save Rs.12,001 / 71% OFF)
+
+*12 Services in 3 Sittings:*
+
+*1st Sitting - Skin Prep & Brightening:*
+- O3+ Facial
+- Bleach / D-Tan
+
+*2nd Sitting - Body Glow & Hair Nourish:*
+- Full Body Bleach
+- Manicure
+- Pedicure
+- Loreal Hair Spa
+
+*3rd Sitting - Final Bridal Finish:*
+- Full Body Wax
+- Full Body Polishing
+- Nail Extension
+- Face Bleach & O3+ Facial
+- Threading & Upper Lips
+
+Premium Products | Hygienic & Safe Care | Flexible Appointments | Expert Professionals
+
+Kab convenient hoga aapko studio visit ke liye?
+Garima ma'am: +91 93542 60517`;
     
     case "B":
-      return `${name}Pre-Bridal + Bridal Makeup Combo - Rs.16,500 (Save Rs.1,999). Bridal includes waterproof finish, soft glam velvety matte, lashes & lenses, draping + hairstyle. Kab convenient hoga? Garima ma'am: +91 93542 60517`;
+      return `${name}*PRE-BRIDAL + BRIDAL MAKEUP COMBO - Rs.16,500* (Save Rs.1,999)
+
+*Includes:*
+- Complete Pre-Bridal Package (12 services in 3 sittings)
+- Bridal Makeup
+
+*Bridal Makeup includes:*
+- Waterproof & Long-Lasting finish
+- Full Coverage Soft Glam Velvety Matte
+- Lashes & Lenses
+- Draping + Hairstyle (Complimentary)
+
+Kab convenient hoga aapko?
+Garima ma'am: +91 93542 60517`;
     
     case "C":
-      return `${name}Hydra Facial Package - Single sitting Rs.999 OR 3-Sitting Package Rs.2,799 (recommended). Benefits: Deep hydration, brightening, skin barrier restore. Results: 60-70% improvement typical. Kab convenient hoga aapko? Garima ma'am: +91 93542 60517`;
+      return `${name}*HYDRA FACIAL PACKAGE*
+
+*Single Sitting:* Rs.1,199
+*3-Sitting Package:* Rs.2,999 (Recommended - Best Value)
+
+*Benefits:*
+- Deep hydration
+- Brightening & glow
+- Skin barrier restore
+- 60-70% improvement typical
+- 2-3 weeks apart for best results
+
+Kab convenient hoga aapko?
+Garima ma'am: +91 93542 60517`;
     
     case "D":
-      return `${name}Nail Services - LAUNCH OFFER Rs.499 (Normal: Rs.1,200-1,500). Services: Nail extension, gel paint, design. Professional team handles all services. Kab convenient hoga? Garima ma'am: +91 93542 60517`;
+      return `${name}*NAIL SERVICES*
+
+- Nail Extension: Rs.599 onwards
+- Natural Nail: Rs.349 onwards
+- Acrylic Nails: Rs.699 onwards
+- Gel Nail Extension: Rs.899 onwards
+
+*Pedicure Services:*
+- Classic Pedicure: Rs.399
+- Spa Pedicure: Rs.449
+- French Pedicure: Rs.549
+- Gel Pedicure: Rs.749
+- Korean Pedicure: Rs.899
+
+Professional team handles all services. Kab convenient hoga aapko?
+Garima ma'am: +91 93542 60517`;
     
     case "E":
-      return `${name}Other Beauty Services available:
-FACIALS: Basic (Rs.549-999) | Premium (Rs.1,599-2,199)
-HAIR: Hair Spa (Rs.499-799) | Hair Cut (Rs.249) | Color (Rs.2,499-3,999)
-WAXING: Face (Rs.299) | Full Arms (Rs.199-399) | Full Legs (Rs.299-599) | Full Body (Rs.1,199-1,999)
-MAKEUP: Basic (Rs.1,500) | HD (Rs.1,999-2,999) | Bridal (Rs.11,000)
+      return `${name}*BEAUTY BOX COMPLETE PRICE LIST*
 
-Kaunsi service chahiye aapko? Garima ma'am: +91 93542 60517`;
+*FACIALS:*
+- Classic Facial (Fruit): Rs.549
+- Dr. Rashel DE Tan: Rs.499
+- Lotus Natural Glow: Rs.799
+- Biotique Anti Ageing: Rs.849
+- Whiting Facial: Rs.999
+- Lotus Hydra Facial: Rs.999
+- Oxylife Pro: Rs.999
+- Red Wine Facial: Rs.1,399
+- Korean Facial: Rs.1,999
+- Premium Facial: Rs.1,599
+- O3+ Vitamin Power Brightening: Rs.1,999
+- O3+ Vitamin Bridal Glow: Rs.2,199
+
+*HAIR CARE:*
+- Classic Hair Spa: Rs.499
+- Loreal Hair Spa: Rs.799
+- Hair Trimming: Rs.149
+- Blow Dryer: Rs.249
+- Hair Cut: Rs.249
+- Root Touchup: Rs.649
+- Full Length Hair Color: Rs.1,499
+- Nanoplastia: Rs.2,499
+- Keratin: Rs.1,499
+- Global Color: Rs.2,499
+- Global with Pre-lights: Rs.3,999
+
+*CLEANUPS:*
+- Fruit: Rs.349
+- Red Wine: Rs.649
+- Whiting Glow: Rs.549
+- Oxy Professional: Rs.549
+- D-Tan: Rs.599
+
+*WAXING:*
+- Brazilian Face Wax: Rs.299
+- Honey Full Arms + Underarms: Rs.199
+- Honey Full Legs: Rs.299
+- Honey Full Body: Rs.1,199
+- White Choco Full Arms + Underarms: Rs.299
+- White Choco Full Legs: Rs.399
+- White Choco Full Body: Rs.1,499
+- Rica Full Arms + Underarms: Rs.399
+- Rica Full Legs: Rs.599
+- Rica Full Body Wax: Rs.1,999
+
+*BASIC CARING:*
+- Arms Polishing: Rs.349
+- Full Body Polishing: Rs.1,999
+- Manicure: Rs.349
+- Threading: Rs.30
+- Upperlips: Rs.20
+- Upperlips (Wax): Rs.50
+- Chin Wax: Rs.50
+- Head Massage: Rs.249
+
+*BLEACH:*
+- Herbal Bleach: Rs.249
+- Back Bleach: Rs.299
+- Full Arms Bleach: Rs.299
+- Oxylife Bleach: Rs.349
+- D-Tan Bleach: Rs.349
+- Full Body Bleach: Rs.1,999
+
+*PARTY MAKE-UPS:*
+- HD Makeup: Rs.1,999
+- Sillicon HD Makeup: Rs.2,999
+
+Kaunsi service chahiye aapko?
+Garima ma'am: +91 93542 60517`;
     
     default:
       return "Aap service select karein. A, B, C, D ya E reply karein.";
   }
 }
 
-const NUDGE_MESSAGES = [
-  "Hi! Bas check kar rahi thi -- koi sawaal tha kya?",
-  "Koi confusion ho toh bata dijiye, help kar sakti hoon!",
-  "Kab convenient rahega booking ke liye?",
-];
-
-function scheduleNudgeCheck() {
-  setInterval(async () => {
-    const now = Date.now();
-    for (const [phone, lastTime] of lastMessageTime.entries()) {
-      const hoursSince = (now - lastTime) / (1000 * 60 * 60);
-      if (hoursSince >= 24 && !nudgeSent.get(phone)) {
-        nudgeSent.set(phone, true);
-        const nudge = NUDGE_MESSAGES[Math.floor(Math.random() * NUDGE_MESSAGES.length)];
-        await sendText(phone, nudge);
-        addToHistory(phone, "assistant", nudge);
-        console.log(`Nudge sent to ${phone}`);
+// NEW: Send PDF document via WAPI
+async function sendPDF(toPhone, pdfUrl, caption) {
+  try {
+    const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
+    const payload = {
+      phone_number: toPhone,
+      message_type: "media",
+      media: {
+        url: pdfUrl,
+        type: "document",
+        caption: caption || ""
       }
-    }
-  }, 30 * 60 * 1000);
+    };
+    const res = await axios.post(url, payload);
+    console.log(`PDF sent to ${toPhone}: ${pdfUrl}`);
+    return res.data;
+  } catch (err) {
+    console.error(`PDF send failed to ${toPhone}:`, err?.response?.data || err.message);
+    // Fallback: send as text link
+    await sendText(toPhone, `Aap yeh PDF download kar sakte hain: ${pdfUrl}`);
+  }
 }
-
-const SYSTEM_PROMPT = `You are Radhya (AI bot), customer support at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi.
-
-Your role: Answer service inquiries and ask for booking. NO trust building, NO lengthy explanations.
-
-TONE: Polite, professional, Hinglish. 1-2 sentences.
-
-CONVERSATION RULES:
-1. Customer asks about service -- Share service details, pricing, package info
-2. Ask when they want to book
-3. Direct them to Garima for slot confirmation
-4. Keep responses SHORT
-
-ALWAYS end with: Garima ma'am: +91 93542 60517`;
 
 async function sendText(toPhone, text) {
   try {
@@ -461,34 +485,6 @@ async function sendText(toPhone, text) {
     return res.data;
   } catch (err) {
     console.error(`Send failed:`, err?.response?.data || err.message);
-  }
-}
-
-async function getAIReply(phone, contextMsg) {
-  addToHistory(phone, "user", contextMsg);
-  const liveInstructions = adminInstructions.length > 0
-    ? "\n\nLIVE INSTRUCTIONS FROM ADMIN:\n" + adminInstructions.map((ins, i) => (i+1) + ". " + ins).join("\n")
-    : "";
-  try {
-    const res = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-5",
-        max_tokens: 300,
-        system: SYSTEM_PROMPT + liveInstructions,
-        messages: getHistory(phone)
-      },
-      { headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" } }
-    );
-    const reply = res.data.content?.[0]?.text || "Ek second.";
-    console.log(`Claude reply for ${phone}: ${reply.substring(0, 80)}`);
-    addToHistory(phone, "assistant", reply);
-    return reply;
-  } catch (err) {
-    console.error(`Claude error:`, err.message);
-    const fallback = "Aap service select karein. A, B, C, D ya E reply karein.";
-    addToHistory(phone, "assistant", fallback);
-    return fallback;
   }
 }
 
@@ -541,123 +537,67 @@ function parseWebhook(body) {
 app.post("/webhook", async (req, res) => {
   try {
     const parsed = parseWebhook(req.body);
-    if (!parsed?.phone) return;
+    if (!parsed?.phone) return res.sendStatus(200);
     const { phone, name, text, hasMedia, isInteractive, interactiveId } = parsed;
-    if (!text && !hasMedia) return;
-    if (text && text.trim() === "") return;
+    if (!text && !hasMedia) return res.sendStatus(200);
+    if (text && text.trim() === "") return res.sendStatus(200);
 
+    console.log(`\n[${new Date().toLocaleTimeString()}] Message from ${phone}: "${text.substring(0, 80)}"`);
+
+    // Skip admin messages
     const cleanPhone = phone.replace(/\D/g, "");
     if (cleanPhone.endsWith("9560277217")) {
-      if (!text.toLowerCase().includes("radhya")) {
-        console.log(`Admin message ignored (no Radhya trigger)`);
-        res.sendStatus(200);
-        return;
-      }
-      if (!adminTrainerActive) {
-        adminTrainerActive = true;
-        console.log(`Admin trainer mode ACTIVATED`);
-        await sendText(phone, `Trainer mode activated. Main sun rahi hoon Radhya ke roop mein. Instruction dijiye.`);
-        return;
-      }
-      const instruction = text.replace(/radhya[,.]?\s*/i, "").trim();
-      
-      if (instruction.toLowerCase().includes("enable auto")) {
-        const match = instruction.match(/(\d{10,})/);
-        if (match) {
-          const targetPhone = match[1];
-          manualOnlyChats.delete(targetPhone);
-          console.log(`AUTO MODE ENABLED for ${targetPhone}`);
-          await sendText(phone, `Auto mode enabled for ${targetPhone}.`);
-          return;
-        }
-      }
-
-      if (instruction) {
-        adminInstructions.push(instruction);
-        if (adminInstructions.length > 5) adminInstructions.shift();
-        console.log(`ADMIN INSTRUCTION: "${instruction}"`);
-        await sendText(phone, `Samajh gayi. Instruction noted: "${instruction.substring(0, 80)}"`);
-      }
-      return;
+      console.log(`Admin message - skipping`);
+      return res.sendStatus(200);
     }
 
     const isNewLead  = isMetaLead(text);
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
-    const followupData = !hasHistory && !isNewLead ? await isInFollowupSent(phone) : null;
 
-    if (!hasHistory && !followupData) {
+    // STEP 1: Add ALL leads to Google Sheets immediately
+    if (!hasHistory) {
       const lead = isNewLead ? extractLeadDetails(text) : {};
       const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
       const source = isAdDM(text) ? "Ad DM" : (isNewLead ? "Meta Form" : "Direct Message");
       await addActiveLead(phone, firstName, lead.wedding || "", lead.city || "", source, "New Lead", text);
       console.log(`ADDED TO SHEETS: ${phone} | Source: ${source}`);
+    } else {
+      await updateActiveLead(phone, { lastMsg: text });
     }
 
-    if (!isNewLead && !hasHistory && !followupData) {
-      console.log(`Not processing: ${phone}`);
-      res.sendStatus(200);
-      return;
-    }
-
+    // STEP 2: Check global BOT_ACTIVE flag
     if (!BOT_ACTIVE) {
       console.log(`BOT_ACTIVE=false -- Lead recorded, no reply: ${phone}`);
-      res.sendStatus(200);
-      return;
+      return res.sendStatus(200);
     }
 
-    const botActive = await checkBotIntervention(phone);
-    if (!botActive) {
-      await updateActiveLead(phone, { lastMsg: text });
-      res.sendStatus(200);
-      return;
+    // STEP 3: CRITICAL - Check Google Sheet "Bot Intervention" column K
+    const botCanReply = await checkBotIntervention(phone);
+    if (!botCanReply) {
+      console.log(`Bot Intervention = NO for ${phone} - SKIPPING REPLY`);
+      return res.sendStatus(200);
     }
 
     if (hasMedia && !text) {
       await sendText(phone, "Text mein likhein please.");
-      return;
+      return res.sendStatus(200);
     }
 
     lastMessageTime.set(phone, Date.now());
     nudgeSent.set(phone, false);
 
-    if (manualOnlyChats.has(phone)) {
-      console.log(`MANUAL MODE: ${phone}`);
-      await addToHistory(phone, "user", text);
-      const extractedDate = extractWeddingDateFromChat(text);
-      const extractedLocation = extractLocationFromChat(text);
-      
-      const updates = { lastMsg: text };
-      if (extractedDate) {
-        updates.wedding = extractedDate;
-        console.log(`Wedding date extracted: "${extractedDate}"`);
-      }
-      if (extractedLocation) {
-        updates.city = extractedLocation;
-        console.log(`Location extracted: "${extractedLocation}"`);
-      }
-      await updateActiveLead(phone, updates);
-      res.sendStatus(200);
-      return;
-    }
-
-    if (isNewLead) {
-      const lead = isAdDM(text) ? {} : extractLeadDetails(text);
-      const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
-      const source = isAdDM(text) ? "Ad DM" : "Meta Form";
-
-      console.log(`NEW LEAD: ${firstName} | ${phone} | ${source}`);
-
-      await addActiveLead(phone, firstName, lead.wedding, lead.city, source, "New Lead", text);
-
+    // STEP 4: NEW LEAD - Send menu
+    if (!hasHistory && (isNewLead || text.toLowerCase().includes("info") || text.toLowerCase().includes("hello"))) {
+      console.log(`NEW LEAD - sending menu to ${phone}`);
       await new Promise(r => setTimeout(r, 2000));
       await sendMenuButtons(phone);
       pendingMenuSelect.add(phone);
-
       conversations.set(phone, []);
       addToHistory(phone, "assistant", MENU_TEXT_FALLBACK);
-      return;
+      return res.sendStatus(200);
     }
 
+    // STEP 5: MENU SELECTION - Send service details
     if (pendingMenuSelect.has(phone)) {
       const selection = isInteractive
         ? (interactiveId || "")
@@ -683,58 +623,51 @@ app.post("/webhook", async (req, res) => {
           servicePath: pathLabels[selection],
         });
 
-        console.log(`Sending service response for path ${selection}`);
+        // Send text response first
         await new Promise(r => setTimeout(r, 2000));
         await sendText(phone, response);
         lastSentMessage.set(phone, response);
-        return;
+
+        // STEP 6: Send PDF for Path A (Pre-Bridal) and Path E (Price List)
+        if (selection === "A") {
+          await new Promise(r => setTimeout(r, 2500));
+          await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
+          console.log(`Pre-Bridal PDF sent to ${phone}`);
+        } else if (selection === "E") {
+          await new Promise(r => setTimeout(r, 2500));
+          await sendPDF(phone, PRICELIST_PDF_URL, "Beauty Box - Complete Price List");
+          console.log(`Price List PDF sent to ${phone}`);
+        } else if (selection === "B") {
+          // Combo also gets Pre-Bridal PDF
+          await new Promise(r => setTimeout(r, 2500));
+          await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details (Part of Combo)");
+          console.log(`Pre-Bridal PDF (Combo) sent to ${phone}`);
+        }
+        
+        return res.sendStatus(200);
       } else {
         await sendText(phone, "Aap A, B, C, D ya E reply karein");
-        return;
+        return res.sendStatus(200);
       }
     }
 
-    let contextMsg = text;
-    if (followupData) {
-      const firstName = followupData.name ? followupData.name.split(" ")[0] : "Customer";
-      console.log(`FOLLOWUP REPLY: ${firstName}`);
-      await markFollowupReplied(phone);
-      await addActiveLead(phone, firstName, followupData.wedding, followupData.city, "Followup", "New Lead", text);
-      contextMsg = `Customer replied to our outreach: "${text}". Ask which service interested.`;
-    }
+    // STEP 7: Continuing conversation
+    if (hasHistory) {
+      console.log(`Continuing conversation with ${phone}`);
+      addToHistory(phone, "user", text);
+      
+      // Simple acknowledgment - direct to Garima
+      await new Promise(r => setTimeout(r, 2000));
+      const response = `Garima ma'am aapko confirm karengi.
++91 93542 60517
 
-    const reply = await getAIReply(phone, contextMsg);
-    const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
-
-    await new Promise(r => setTimeout(r, 2000));
-
-    const lastSent = lastSentMessage.get(phone) || "";
-    for (let i = 0; i < parts.length; i++) {
-      if (parts[i] === lastSent && i === 0) continue;
-      if (i > 0) await new Promise(r => setTimeout(r, 1800));
-      await sendText(phone, parts[i]);
-      lastSentMessage.set(phone, parts[i]);
-    }
-
-    const extractedDate = extractWeddingDateFromChat(text);
-    const extractedLocation = extractLocationFromChat(text);
-    
-    if (extractedDate || extractedLocation) {
-      const updates = { lastMsg: text, status: detectStatus(reply, text) };
-      if (extractedDate) {
-        updates.wedding = extractedDate;
-      }
-      if (extractedLocation) {
-        updates.city = extractedLocation;
-      }
-      await updateActiveLead(phone, updates);
-    } else {
-      const status = detectStatus(reply, text);
-      await updateActiveLead(phone, { lastMsg: text, status });
+Aap unhe directly call ya WhatsApp kar sakte hain.`;
+      await sendText(phone, response);
+      addToHistory(phone, "assistant", response);
+      return res.sendStatus(200);
     }
 
     res.sendStatus(200);
-
   } catch (err) {
     console.error("Webhook error:", err?.response?.data || err.message);
     res.sendStatus(200);
@@ -745,36 +678,19 @@ app.get("/admin", (req, res) => {
   const defaultMsg = `We have received your inquiry on our advertisement for Pre-Bridal Package. Please let us know your marriage date and location.\n\nRegards,\nBeauty Box Makeup Studio by Garima Nagpal`;
   res.setHeader("Content-Type", "text/html");
   res.send(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Beauty Box Admin v3.0</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}button.secondary{background:#555;margin-top:8px}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="container"><div class="card"><h2>New Chat</h2><p>Send opening message and start bot</p><label>Phone (with country code)</label><input id="ph" type="tel" placeholder="919999999999"><label>Name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message</label><textarea id="omsg">${defaultMsg}</textarea><label>Admin key</label><input id="ky" type="password" placeholder="beautybox2024"><button onclick="goNew(true)">Send & Activate</button><div class="msg" id="msg1"></div></div></div><script>async function goNew(sendMsg){const ph=document.getElementById('ph').value.trim();const ky=document.getElementById('ky').value.trim();if(!ph||!ky){sh('Enter phone and key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:document.getElementById('nm').value.trim(),key:ky,openingMessage:sendMsg?document.getElementById('omsg').value.trim():'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh('Bot activated for '+ph,'ok','msg1');}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}</script></body></html>`);
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Beauty Box Admin v3.1</title>
+<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}</style></head><body><div class="container"><div class="card"><h2>Beauty Box Admin v3.1</h2><p>Send opening message and activate bot</p><label>Phone (with country code)</label><input id="ph" type="tel" placeholder="919999999999"><label>Name</label><input id="nm" type="text" placeholder="Priya"><label>Opening message</label><textarea id="omsg">${defaultMsg}</textarea><label>Admin key</label><input id="ky" type="password" placeholder="beautybox2024"><button onclick="goNew()">Send & Activate Bot</button><div class="msg" id="msg1"></div></div></div><script>async function goNew(){const ph=document.getElementById('ph').value.trim();const ky=document.getElementById('ky').value.trim();if(!ph||!ky){sh('Enter phone and key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:document.getElementById('nm').value.trim(),key:ky,openingMessage:document.getElementById('omsg').value.trim()})});const d=await r.json();if(d.success){sh('Bot activated for '+ph,'ok','msg1');}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}</script></body></html>`);
 });
 
 app.post("/admin/start", async (req, res) => {
-  const { phone, name, key } = req.body;
+  const { phone, name, key, openingMessage } = req.body;
   if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
   if (!phone) return res.json({ success: false, error: "Phone required" });
   try {
-    const sendMsg = req.body.sendMessage !== false;
     const firstName = name ? name.trim().split(" ")[0] : "";
-
-    if (sendMsg && req.body.openingMessage) {
-      const openingMsg = req.body.openingMessage.trim();
-      await new Promise(r => setTimeout(r, 1000));
-      await sendText(phone, openingMsg);
-      addToHistory(phone, "assistant", openingMsg);
-      manualOnlyChats.add(phone);
-      lastMessageTime.set(phone, Date.now());
-      nudgeSent.set(phone, false);
-      await addActiveLead(phone, firstName, "", "", "Admin Initiated", "Conversation Started", openingMsg);
-      console.log(`ADMIN: Message sent for ${phone}`);
-    } else {
-      conversations.set(phone, []);
-      addToHistory(phone, "assistant", "Admin activated this number.");
-      manualOnlyChats.add(phone);
-      lastMessageTime.set(phone, Date.now());
-      nudgeSent.set(phone, false);
-      await addActiveLead(phone, firstName, "", "", "Admin Activated", "New Lead", "Manually activated");
-      console.log(`ADMIN: Activated ${phone}`);
+    if (openingMessage) {
+      await sendText(phone, openingMessage.trim());
+      await addActiveLead(phone, firstName, "", "", "Admin Initiated", "Conversation Started", openingMessage);
     }
     res.json({ success: true });
   } catch (err) {
@@ -784,70 +700,38 @@ app.post("/admin/start", async (req, res) => {
 
 app.get("/", (req, res) => {
   res.json({
-    agent: "Beauty Box AI Agent v3.0",
-    tone: "Simplified Inquiry to Booking Flow",
+    agent: "Beauty Box AI Agent v3.1",
+    bot_active: BOT_ACTIVE,
+    bot_intervention_check: "ENABLED - Checks Google Sheet column K before every reply",
+    pre_bridal_pdf: PREBRIDAL_PDF_URL,
+    price_list_pdf: PRICELIST_PDF_URL,
     claude: ANTHROPIC_API_KEY ? "OK" : "MISSING",
     wapi: WAPI_VENDOR_UID ? "OK" : "MISSING",
     sheets: sheetsClient ? "OK" : "DISABLED",
-    admin: "/admin",
     activeConversations: conversations.size,
-    pendingMenuSelections: pendingMenuSelect.size,
-    nudgeTracking: lastMessageTime.size,
   });
 });
 
-async function sendDailyReport() {
-  try {
-    if (!sheetsClient) return;
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "Active Leads!A:I",
-    });
-    const rows = res.data.values || [];
-    const total = Math.max(0, rows.length - 1);
-    let today = 0;
-    const todayStr = new Date().toLocaleDateString("en-IN");
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][7] && rows[i][7].includes(todayStr.split("/")[0])) today++;
-    }
-    await sendText(ADMIN_PHONE, `Daily Report\n\nBot: OK (v3.0)\nTotal leads: ${total}\nNew today: ${today}\nActive conversations: ${conversations.size}`);
-  } catch (err) {
-    console.error("Daily report error:", err.message);
-  }
-}
-
-function scheduleDailyReport() {
-  const now = new Date();
-  const istNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  const next9am = new Date(istNow);
-  next9am.setHours(9, 0, 0, 0);
-  if (istNow >= next9am) next9am.setDate(next9am.getDate() + 1);
-  const delay = next9am - istNow;
-  setTimeout(() => {
-    sendDailyReport();
-    setInterval(sendDailyReport, 24 * 60 * 60 * 1000);
-  }, delay);
-  console.log(`Daily report scheduled in ${Math.round(delay/1000/60)} minutes`);
-}
-
 app.listen(PORT, async () => {
-  console.log(`\n=== BEAUTY BOX BOT v3.0 ===`);
+  console.log(`\n=== BEAUTY BOX BOT v3.1 ===`);
   console.log(`Port: ${PORT}`);
   console.log(`BOT_ACTIVE: ${BOT_ACTIVE}`);
-  console.log(`Flow: Inquiry -- Service Menu -- Details + Price -- Booking`);
-  console.log(`All leads tracked: YES`);
-  console.log(`\nSetup:`);
+  console.log(`Bot Intervention Check: ENABLED (checks column K before every reply)`);
+  console.log(`\nPDF URLs:`);
+  console.log(`Pre-Bridal: ${PREBRIDAL_PDF_URL}`);
+  console.log(`Price List: ${PRICELIST_PDF_URL}`);
+  console.log(`\nAPI Status:`);
   console.log(`Claude: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`WAPI: ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
   console.log(`Sheet: ${SHEET_ID ? "OK" : "MISSING"}`);
   
   await initSheets();
-  scheduleDailyReport();
-  scheduleNudgeCheck();
   
-  console.log(`\nMenu System: Active (A/B/C/D/E paths)`);
-  console.log(`Nudge System: Active (24h silence trigger)`);
-  console.log(`Location Extraction: Active`);
-  console.log(`Admin Panel: /admin`);
+  console.log(`\n=== v3.1 UPDATES ===`);
+  console.log(`1. Pre-Bridal PDF auto-send for Path A & B`);
+  console.log(`2. Price List PDF auto-send for Path E`);
+  console.log(`3. Bot Intervention check BEFORE every reply`);
+  console.log(`4. Hydra updated: Rs.1,199 / Rs.2,999`);
+  console.log(`5. Complete price list from PDF integrated`);
   console.log(`\nAll systems ready\n`);
 });
