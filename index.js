@@ -17,9 +17,8 @@ const SHEET_ID          = process.env.SHEET_ID          || "";
 const ADMIN_PHONE       = "919560277217";
 const GARIMA_PHONE      = "919354260517";
 
-// PDF URLs - Upload your PDFs to a public hosting (Google Drive, Dropbox, S3, etc.) and paste URLs here
-const PREBRIDAL_PDF_URL = process.env.PREBRIDAL_PDF_URL || "https://your-hosting-url.com/Prebridal_7499.pdf";
-const PRICELIST_PDF_URL = process.env.PRICELIST_PDF_URL || "https://your-hosting-url.com/price_list.pdf";
+// PDF URL - Only Pre-Bridal PDF will be sent
+const PREBRIDAL_PDF_URL = process.env.PREBRIDAL_PDF_URL || "https://raw.githubusercontent.com/gauravnagpal1711-hue/bb-assets/main/Prebridal_7499.pdf";
 
 let sheetsClient = null;
 async function initSheets() {
@@ -293,7 +292,7 @@ function detectMenuSelection(text) {
   return null;
 }
 
-// UPDATED SERVICE RESPONSES - As per actual PDFs
+// SERVICE RESPONSES - All as text messages
 function getServiceResponse(selection, customerName) {
   const name = customerName ? `${customerName}, ` : "";
   
@@ -454,7 +453,7 @@ Garima ma'am: +91 93542 60517`;
   }
 }
 
-// NEW: Send PDF document via WAPI
+// Send PDF document via WAPI - Only for Pre-Bridal
 async function sendPDF(toPhone, pdfUrl, caption) {
   try {
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
@@ -623,25 +622,16 @@ app.post("/webhook", async (req, res) => {
           servicePath: pathLabels[selection],
         });
 
-        // Send text response first
+        // Send text response
         await new Promise(r => setTimeout(r, 2000));
         await sendText(phone, response);
         lastSentMessage.set(phone, response);
 
-        // STEP 6: Send PDF for Path A (Pre-Bridal) and Path E (Price List)
-        if (selection === "A") {
-          await new Promise(r => setTimeout(r, 2500));
+        // Send PDF ONLY for Path A (Pre-Bridal) and Path B (Combo includes Pre-Bridal)
+        if (selection === "A" || selection === "B") {
+          await new Promise(r => setTimeout(r, 3000));
           await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
-          console.log(`Pre-Bridal PDF sent to ${phone}`);
-        } else if (selection === "E") {
-          await new Promise(r => setTimeout(r, 2500));
-          await sendPDF(phone, PRICELIST_PDF_URL, "Beauty Box - Complete Price List");
-          console.log(`Price List PDF sent to ${phone}`);
-        } else if (selection === "B") {
-          // Combo also gets Pre-Bridal PDF
-          await new Promise(r => setTimeout(r, 2500));
-          await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details (Part of Combo)");
-          console.log(`Pre-Bridal PDF (Combo) sent to ${phone}`);
+          console.log(`Pre-Bridal PDF sent to ${phone} for path ${selection}`);
         }
         
         return res.sendStatus(200);
@@ -651,12 +641,11 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // STEP 7: Continuing conversation
+    // STEP 6: Continuing conversation
     if (hasHistory) {
       console.log(`Continuing conversation with ${phone}`);
       addToHistory(phone, "user", text);
       
-      // Simple acknowledgment - direct to Garima
       await new Promise(r => setTimeout(r, 2000));
       const response = `Garima ma'am aapko confirm karengi.
 +91 93542 60517
@@ -704,7 +693,6 @@ app.get("/", (req, res) => {
     bot_active: BOT_ACTIVE,
     bot_intervention_check: "ENABLED - Checks Google Sheet column K before every reply",
     pre_bridal_pdf: PREBRIDAL_PDF_URL,
-    price_list_pdf: PRICELIST_PDF_URL,
     claude: ANTHROPIC_API_KEY ? "OK" : "MISSING",
     wapi: WAPI_VENDOR_UID ? "OK" : "MISSING",
     sheets: sheetsClient ? "OK" : "DISABLED",
@@ -717,9 +705,9 @@ app.listen(PORT, async () => {
   console.log(`Port: ${PORT}`);
   console.log(`BOT_ACTIVE: ${BOT_ACTIVE}`);
   console.log(`Bot Intervention Check: ENABLED (checks column K before every reply)`);
-  console.log(`\nPDF URLs:`);
-  console.log(`Pre-Bridal: ${PREBRIDAL_PDF_URL}`);
-  console.log(`Price List: ${PRICELIST_PDF_URL}`);
+  console.log(`\nPDF Configuration:`);
+  console.log(`Pre-Bridal PDF: ${PREBRIDAL_PDF_URL}`);
+  console.log(`(Other services sent as text only)`);
   console.log(`\nAPI Status:`);
   console.log(`Claude: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`WAPI: ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
@@ -727,11 +715,11 @@ app.listen(PORT, async () => {
   
   await initSheets();
   
-  console.log(`\n=== v3.1 UPDATES ===`);
-  console.log(`1. Pre-Bridal PDF auto-send for Path A & B`);
-  console.log(`2. Price List PDF auto-send for Path E`);
-  console.log(`3. Bot Intervention check BEFORE every reply`);
-  console.log(`4. Hydra updated: Rs.1,199 / Rs.2,999`);
-  console.log(`5. Complete price list from PDF integrated`);
+  console.log(`\n=== v3.1 FEATURES ===`);
+  console.log(`Path A (Pre-Bridal) -- Text + PDF`);
+  console.log(`Path B (Combo) -- Text + Pre-Bridal PDF`);
+  console.log(`Path C (Hydra) -- Text only`);
+  console.log(`Path D (Nails) -- Text only`);
+  console.log(`Path E (Other) -- Text only`);
   console.log(`\nAll systems ready\n`);
 });
