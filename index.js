@@ -473,7 +473,7 @@ async function getAIReply(phone, contextMsg) {
     const res = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
-        model: "claude-sonnet-4-5",
+        model: "claude-opus-4-8",
         max_tokens: 300,
         system: SYSTEM_PROMPT + liveInstructions,
         messages: getHistory(phone)
