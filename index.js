@@ -12,17 +12,16 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const WAPI_VENDOR_UID   = process.env.WAPI_VENDOR_UID   || "";
 const WAPI_TOKEN        = process.env.WAPI_TOKEN        || "";
 const ADMIN_KEY         = process.env.ADMIN_KEY         || "beautybox2024";
-const BOT_ACTIVE        = true; // Set to true to enable bot replies
+const BOT_ACTIVE        = true;
 const SHEET_ID          = process.env.SHEET_ID          || "";
 const ADMIN_PHONE       = "919560277217";
 const GARIMA_PHONE      = "919354260517";
 
-// -- GOOGLE SHEETS SETUP
 let sheetsClient = null;
 async function initSheets() {
   try {
     if (!process.env.GOOGLE_CREDENTIALS || !SHEET_ID) {
-      console.log("⚠️ Google Sheets disabled -- credentials or SHEET_ID missing");
+      console.log("Sheets disabled -- credentials or SHEET_ID missing");
       return;
     }
     const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
@@ -31,10 +30,10 @@ async function initSheets() {
       scopes: ["https://www.googleapis.com/auth/spreadsheets"],
     });
     sheetsClient = google.sheets({ version: "v4", auth });
-    console.log("📊 Google Sheets connected ✅");
+    console.log("Google Sheets connected");
     await ensureHeaders();
   } catch (err) {
-    console.error("❌ Sheets init failed:", err.message);
+    console.error("Sheets init failed:", err.message);
   }
 }
 
@@ -54,13 +53,12 @@ async function ensureHeaders() {
       valueInputOption: "RAW",
       resource: { values: [followupHeaders] },
     });
-    console.log("📋 Sheet headers verified");
+    console.log("Sheet headers verified");
   } catch (err) {
-    console.log("⚠️ Header setup skipped:", err.message);
+    console.log("Header setup skipped:", err.message);
   }
 }
 
-// -- GET CUSTOMER DATA FROM SHEETS
 async function getCustomerData(phone) {
   if (!sheetsClient) return null;
   try {
@@ -91,7 +89,6 @@ async function getCustomerData(phone) {
   }
 }
 
-// -- CHECK BOT INTERVENTION FROM SHEET
 async function checkBotIntervention(phone) {
   if (!sheetsClient) return true;
   try {
@@ -103,7 +100,7 @@ async function checkBotIntervention(phone) {
     });
     const val = res.data.values?.[0]?.[0] || "Yes";
     const isOn = val.toString().trim().toLowerCase() !== "no";
-    if (!isOn) console.log(`🚫 Bot Intervention = No for ${phone} -- bot skipping reply`);
+    if (!isOn) console.log(`Bot Intervention = No for ${phone} -- bot skipping`);
     return isOn;
   } catch (err) {
     console.error("checkBotIntervention error:", err.message);
@@ -150,7 +147,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
       resource: {
         values: [[
           phone, name || "", wedding || "", city || "", source || "",
-          status || "🆕 New Lead",
+          status || "New Lead",
           (lastMsg || "").substring(0, 200),
           nowIST(), nowIST(),
           "",
@@ -158,7 +155,7 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
         ]],
       },
     });
-    console.log(`📊 Added to Active Leads: ${phone}`);
+    console.log(`Added to Active Leads: ${phone}`);
   } catch (err) {
     console.error("addActiveLead error:", err.message);
   }
@@ -180,7 +177,7 @@ async function updateActiveLead(phone, updates) {
       updates.wedding || current[2] || "",
       updates.city    || current[3] || "",
       current[4] || "",
-      updates.status  || current[5] || "💬 Conversation Started",
+      updates.status  || current[5] || "Conversation Started",
       (updates.lastMsg || current[6] || "").substring(0, 200),
       current[7] || nowIST(),
       nowIST(),
@@ -248,7 +245,7 @@ async function markFollowupReplied(phone) {
           valueInputOption: "RAW",
           resource: { values: [["Replied"]] },
         });
-        console.log(`📊 Marked Followup as Replied: ${phone}`);
+        console.log(`Marked Followup as Replied: ${phone}`);
         return;
       }
     }
@@ -257,28 +254,17 @@ async function markFollowupReplied(phone) {
   }
 }
 
-// -- STATUS DETECTION
 function detectStatus(aiReply, customerMsg) {
   const reply = (aiReply || "").toLowerCase();
   const msg   = (customerMsg || "").toLowerCase();
 
-  if (reply.includes("garima ma'am aapko") && reply.includes("qr")) return "💳 Advance Pending";
-  if (reply.includes("garima ma'am se timing confirm")) return "🏠 Studio Visit Scheduled";
-  if (reply.includes("pre-bridal package")) return "📋 Package Shared";
-  if (reply.includes("why pay more")) return "💰 Price Shared";
-  if (reply.includes("combo price")) return "💑 Combo Interest";
-  if (reply.includes("hydra")) return "💧 Hydra Interest";
-  if (reply.includes("family") || reply.includes("mummy")) return "👨‍👩‍👧 Awaiting Family OK";
-  if (reply.includes("nurture")) return "🌱 Nurture - Far Wedding";
-  if (reply.includes("nail")) return "💅 Nail Service Interest";
-
-  if (msg.includes("nahi")) return "❌ Not Interested";
-  if (msg.includes("yes") || msg.includes("confirm") || msg.includes("book")) return "✅ Interested";
-
+  if (reply.includes("garima")) return "Contact Garima";
+  if (reply.includes("package")) return "Package Shared";
+  if (msg.includes("yes")) return "Interested";
+  if (msg.includes("no")) return "Not Interested";
   return null;
 }
 
-// -- META & AD TRIGGERS
 const META_TRIGGER  = "i filled in your form and would like to know more about your business";
 const AD_DM_TRIGGER = "hello! can i get more info on this";
 
@@ -286,6 +272,7 @@ function isMetaLead(text) {
   const lower = text.toLowerCase().trim();
   return lower.includes(META_TRIGGER) || lower.includes(AD_DM_TRIGGER);
 }
+
 function isAdDM(text) {
   return text.toLowerCase().trim().includes(AD_DM_TRIGGER);
 }
@@ -338,7 +325,6 @@ function extractLocationFromChat(text) {
   return null;
 }
 
-// -- CONVERSATION MEMORY
 const conversations      = new Map();
 const lastSentMessage    = new Map();
 const lastMessageTime    = new Map();
@@ -353,18 +339,18 @@ function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
   return conversations.get(phone);
 }
+
 function addToHistory(phone, role, content) {
   const h = getHistory(phone);
   h.push({ role, content });
   if (h.length > 10) h.splice(0, h.length - 10);
 }
 
-// -- MENU SYSTEM
-const MENU_BODY = `Welcome to *Beauty Box Makeup Studio*
+const MENU_BODY = `Welcome to Beauty Box Makeup Studio
 
-Aap kaunsi service ke baare mein jaanna chahti hain? Ek option choose karein`;
+Aap kaunsi service ke baare mein jaanna chahti hain?`;
 
-const MENU_TEXT_FALLBACK = `Welcome to *Beauty Box Makeup Studio*
+const MENU_TEXT_FALLBACK = `Welcome to Beauty Box Makeup Studio
 
 Aap kaunsi service ke baare mein jaanna chahti hain?
 
@@ -374,70 +360,63 @@ Aap kaunsi service ke baare mein jaanna chahti hain?
 *D* -- Nail Services
 *E* -- Other Beauty Services
 
-Reply *A, B, C, D ya E* karein`;
+Reply A, B, C, D ya E karein`;
 
 async function sendMenuButtons(toPhone) {
   try {
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
     const payload = {
       phone_number: toPhone,
-      message_type: "interactive",
-      interactive: {
-        type: "list",
-        body: { text: MENU_BODY },
-        action: {
-          button: "Choose Service",
-          sections: [{
-            title: "Beauty Box Services",
-            rows: [
-              { id: "A", title: "Pre-Bridal Package", description: "12 services, 3 sittings" },
-              { id: "B", title: "Pre Bridal+ Bridal Makeup", description: "Complete bridal combo" },
-              { id: "C", title: "Hydra Facial Package", description: "Deep hydration facials" },
-              { id: "D", title: "Nail Services", description: "Launch offer" },
-              { id: "E", title: "Other Beauty Services", description: "Facials, waxing, hair care" }
-            ]
-          }]
-        }
-      }
+      message_type: "text",
+      message_body: MENU_TEXT_FALLBACK,
     };
-    const res = await axios.post(url, payload);
-    console.log(`📋 Interactive menu sent to ${toPhone}`);
-    return res.data;
+    await axios.post(url, payload);
+    console.log(`Menu sent to ${toPhone}`);
   } catch (err) {
-    console.error(`⚠️ Interactive menu failed, using text fallback:`, err?.response?.data?.message || err.message);
-    await sendText(toPhone, MENU_TEXT_FALLBACK);
+    console.error(`Menu failed:`, err?.response?.data?.message || err.message);
   }
 }
 
 function detectMenuSelection(text) {
-  const t = (text || "").trim().toLowerCase();
-  if (t === "a" || t === "1" || t.includes("pre-bridal")) return "A";
-  if (t === "b" || t === "2" || t.includes("combo")) return "B";
-  if (t === "c" || t === "3" || t.includes("hydra")) return "C";
-  if (t === "d" || t === "4" || t.includes("nail")) return "D";
-  if (t === "e" || t === "5" || t.includes("beauty")) return "E";
+  const t = (text || "").trim().toUpperCase();
+  if (t === "A" || t === "1") return "A";
+  if (t === "B" || t === "2") return "B";
+  if (t === "C" || t === "3") return "C";
+  if (t === "D" || t === "4") return "D";
+  if (t === "E" || t === "5") return "E";
   return null;
 }
 
-function buildPathContext(selectedPath, customerName, wedding, city, customerMsg) {
-  const name = customerName || "not given";
-  switch (selectedPath) {
+function getServiceResponse(selection, customerName) {
+  const name = customerName ? `${customerName}, ` : "";
+  
+  switch(selection) {
     case "A":
-      return `Customer selected: Pre-Bridal Package. Name: ${name}, Wedding: ${wedding || "not mentioned"}, City: ${city || "not mentioned"}. Customer message: "${customerMsg}". INSTRUCTION: Share pre-bridal package details and pricing. Ask when they want to book. NO trust building.`;
+      return `${name}Pre-Bridal Package - 12 Services in 3 Sittings for Rs.7,499 (Market value Rs.13,850 - Save Rs.6,351 or 46% OFF). Kab convenient hoga aapko studio visit ke liye? Garima ma'am: +91 93542 60517`;
+    
     case "B":
-      return `Customer selected: Pre-Bridal + Bridal Makeup Combo. Name: ${name}. INSTRUCTION: Share combo package details and pricing. Ask when they want to book. NO trust building.`;
+      return `${name}Pre-Bridal + Bridal Makeup Combo - Rs.16,500 (Save Rs.1,999). Bridal includes waterproof finish, soft glam velvety matte, lashes & lenses, draping + hairstyle. Kab convenient hoga? Garima ma'am: +91 93542 60517`;
+    
     case "C":
-      return `Customer selected: Hydra Facial Package. Name: ${name}. INSTRUCTION: Share Hydra Facial Package details: Single sitting Rs.999 OR 3-Sitting Package Rs.2,799 (recommended). Benefits: Deep hydration, brightening, skin barrier restore. Then ask: "Kab convenient hoga aapko?" Keep response to 2-3 sentences max.`;
+      return `${name}Hydra Facial Package - Single sitting Rs.999 OR 3-Sitting Package Rs.2,799 (recommended). Benefits: Deep hydration, brightening, skin barrier restore. Results: 60-70% improvement typical. Kab convenient hoga aapko? Garima ma'am: +91 93542 60517`;
+    
     case "D":
-      return `Customer selected: Nail Services. Name: ${name}. INSTRUCTION: Share Nail Services Launch Offer: Rs.499 (Normal: Rs.1,200-1,500). Professional team. Ask: "Kab convenient hoga aapko?" Keep it short (2 sentences).`;
+      return `${name}Nail Services - LAUNCH OFFER Rs.499 (Normal: Rs.1,200-1,500). Services: Nail extension, gel paint, design. Professional team handles all services. Kab convenient hoga? Garima ma'am: +91 93542 60517`;
+    
     case "E":
-      return `Customer selected: Other Beauty Services. Name: ${name}. INSTRUCTION: Ask which specific service they want (facials, hair, waxing, makeup, etc), then share price. Ask for booking.`;
+      return `${name}Other Beauty Services available:
+FACIALS: Basic (Rs.549-999) | Premium (Rs.1,599-2,199)
+HAIR: Hair Spa (Rs.499-799) | Hair Cut (Rs.249) | Color (Rs.2,499-3,999)
+WAXING: Face (Rs.299) | Full Arms (Rs.199-399) | Full Legs (Rs.299-599) | Full Body (Rs.1,199-1,999)
+MAKEUP: Basic (Rs.1,500) | HD (Rs.1,999-2,999) | Bridal (Rs.11,000)
+
+Kaunsi service chahiye aapko? Garima ma'am: +91 93542 60517`;
+    
     default:
-      return `Customer message: "${customerMsg}". Name: ${name}. Respond and ask for booking.`;
+      return "Aap service select karein. A, B, C, D ya E reply karein.";
   }
 }
 
-// -- NUDGE SYSTEM
 const NUDGE_MESSAGES = [
   "Hi! Bas check kar rahi thi -- koi sawaal tha kya?",
   "Koi confusion ho toh bata dijiye, help kar sakti hoon!",
@@ -454,18 +433,17 @@ function scheduleNudgeCheck() {
         const nudge = NUDGE_MESSAGES[Math.floor(Math.random() * NUDGE_MESSAGES.length)];
         await sendText(phone, nudge);
         addToHistory(phone, "assistant", nudge);
-        console.log(`🔔 Nudge sent to ${phone}`);
+        console.log(`Nudge sent to ${phone}`);
       }
     }
   }, 30 * 60 * 1000);
 }
 
-// -- SIMPLIFIED SYSTEM PROMPT v3.0
 const SYSTEM_PROMPT = `You are Radhya (AI bot), customer support at Beauty Box Makeup Studio by Garima Nagpal, Vikaspuri Delhi.
 
-Your role: Answer service inquiries and facilitate booking. NO trust building, NO lengthy explanations.
+Your role: Answer service inquiries and ask for booking. NO trust building, NO lengthy explanations.
 
-TONE: Polite, professional, Hinglish. 1-2 sentences max.
+TONE: Polite, professional, Hinglish. 1-2 sentences.
 
 CONVERSATION RULES:
 1. Customer asks about service -- Share service details, pricing, package info
@@ -473,62 +451,19 @@ CONVERSATION RULES:
 3. Direct them to Garima for slot confirmation
 4. Keep responses SHORT
 
-SERVICE DETAILS & PRICING:
+ALWAYS end with: Garima ma'am: +91 93542 60517`;
 
-PRE-BRIDAL PACKAGE (A):
-12 Services in 3 Sittings -- Rs.7,499
-Services: O3+ Facial (x2), Bleach/D-Tan (x2), Full Body Bleach, Full Body Wax, Full Body Polishing, Hair Spa, Manicure, Pedicure, Nail Extension, Face Bleach, Threading & Upper Lips
-Market value: Rs.13,850 -- Save Rs.6,351 (46% OFF)
-
-COMBO PACKAGE (B):
-Pre-Bridal (12 services) + Bridal Makeup
-Pre-Bridal: Rs.7,499 | Bridal Makeup: Rs.11,000
-Combo: Rs.16,500 (Save Rs.1,999)
-Bridal includes: Waterproof finish, soft glam velvety matte, lashes & lenses, draping + hairstyle complimentary
-
-HYDRA FACIAL PACKAGE (C):
-Single sitting: Rs.999
-3-Sitting Package: Rs.2,799 (recommended)
-Benefits: Deep hydration, brightening, skin barrier restore, 60-70% improvement typical
-
-NAIL SERVICES (D):
-LAUNCH OFFER: Rs.499 (Normal: Rs.1,200-1,500)
-Services: Nail extension, gel paint, design
-Professional nail team handles services
-
-OTHER BEAUTY SERVICES (E):
-FACIALS: Basic (Rs.549-999) | Premium (Rs.1,599-2,199)
-HAIR: Hair Spa (Rs.499-799) | Hair Cut (Rs.249) | Color (Rs.2,499-3,999)
-WAXING: Face (Rs.299) | Full Arms (Rs.199-399) | Full Legs (Rs.299-599) | Full Body (Rs.1,199-1,999)
-BASIC: Manicure (Rs.349) | Pedicure (Rs.349-549) | Threading (Rs.30) | Polishing (Rs.1,999)
-MAKEUP: Basic (Rs.1,500) | HD (Rs.1,999-2,999) | Bridal (Rs.11,000)
-
-BOOKING FLOW:
-1. After sharing service: Ask "Kab convenient hoga aapko studio visit ke liye?"
-2. If agreed: "Perfect! Garima ma'am aapko confirm karengi. +91 93542 60517"
-3. If hesitant: "Aap studio visit kar sakte ho -- koi pressure nahi. Kab suitable hai?"
-4. For advance: "Garima ma'am QR code bhejegi"
-
-SPECIAL HANDLING:
-- Portfolio/experience: https://www.instagram.com/garimanagpalmua/
-- Price negotiation: "Garima ma'am se baat karein"
-- Slot/QR code: Always direct to Garima, NEVER send from bot
-
-KEY: NO TRUST BUILDING. Share details -- Ask for booking -- Direct to Garima.`;
-
-// -- SEND TEXT
 async function sendText(toPhone, text) {
   try {
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
     const res = await axios.post(url, { phone_number: toPhone, message_body: text, message_type: "text" });
-    console.log(`✅ Sent to ${toPhone}: "${text.substring(0, 50)}"`);
+    console.log(`Sent to ${toPhone}: "${text.substring(0, 50)}"`);
     return res.data;
   } catch (err) {
-    console.error(`❌ Send failed:`, err?.response?.data || err.message);
+    console.error(`Send failed:`, err?.response?.data || err.message);
   }
 }
 
-// -- CALL CLAUDE
 async function getAIReply(phone, contextMsg) {
   addToHistory(phone, "user", contextMsg);
   const liveInstructions = adminInstructions.length > 0
@@ -546,17 +481,17 @@ async function getAIReply(phone, contextMsg) {
       { headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" } }
     );
     const reply = res.data.content?.[0]?.text || "Ek second.";
+    console.log(`Claude reply for ${phone}: ${reply.substring(0, 80)}`);
     addToHistory(phone, "assistant", reply);
     return reply;
   } catch (err) {
-    console.error(`Claude API error for ${phone}:`, err.message);
-    const fallback = "Aap kaunsi service ke baare mein jaanna chahti ho? A, B, C, D ya E option select karein.";
+    console.error(`Claude error:`, err.message);
+    const fallback = "Aap service select karein. A, B, C, D ya E reply karein.";
     addToHistory(phone, "assistant", fallback);
     return fallback;
   }
 }
 
-// -- PARSE WEBHOOK
 function parseWebhook(body) {
   try {
     const messages = body?.entry?.[0]?.changes?.[0]?.value?.messages;
@@ -603,7 +538,6 @@ function parseWebhook(body) {
   } catch (e) { return null; }
 }
 
-// -- WEBHOOK ENDPOINT
 app.post("/webhook", async (req, res) => {
   try {
     const parsed = parseWebhook(req.body);
@@ -622,7 +556,7 @@ app.post("/webhook", async (req, res) => {
       if (!adminTrainerActive) {
         adminTrainerActive = true;
         console.log(`Admin trainer mode ACTIVATED`);
-        await sendText(phone, `Trainer mode activated. Instruction dijiye.`);
+        await sendText(phone, `Trainer mode activated. Main sun rahi hoon Radhya ke roop mein. Instruction dijiye.`);
         return;
       }
       const instruction = text.replace(/radhya[,.]?\s*/i, "").trim();
@@ -642,7 +576,7 @@ app.post("/webhook", async (req, res) => {
         adminInstructions.push(instruction);
         if (adminInstructions.length > 5) adminInstructions.shift();
         console.log(`ADMIN INSTRUCTION: "${instruction}"`);
-        await sendText(phone, `Instruction noted: "${instruction.substring(0, 80)}"`);
+        await sendText(phone, `Samajh gayi. Instruction noted: "${instruction.substring(0, 80)}"`);
       }
       return;
     }
@@ -651,29 +585,26 @@ app.post("/webhook", async (req, res) => {
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
     const followupData = !hasHistory && !isNewLead ? await isInFollowupSent(phone) : null;
 
-    // ADD ALL LEADS TO SHEETS IMMEDIATELY
     if (!hasHistory && !followupData) {
       const lead = isNewLead ? extractLeadDetails(text) : {};
       const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
       const source = isAdDM(text) ? "Ad DM" : (isNewLead ? "Meta Form" : "Direct Message");
-      await addActiveLead(phone, firstName, lead.wedding || "", lead.city || "", source, "🆕 New Lead", text);
+      await addActiveLead(phone, firstName, lead.wedding || "", lead.city || "", source, "New Lead", text);
       console.log(`ADDED TO SHEETS: ${phone} | Source: ${source}`);
     }
 
     if (!isNewLead && !hasHistory && !followupData) {
-      console.log(`Lead added but not processing: ${phone}`);
+      console.log(`Not processing: ${phone}`);
       res.sendStatus(200);
       return;
     }
 
-    // -- GLOBAL BOT ACTIVE CHECK
     if (!BOT_ACTIVE) {
-      console.log(`BOT_ACTIVE=false -- Lead recorded: ${phone}`);
+      console.log(`BOT_ACTIVE=false -- Lead recorded, no reply: ${phone}`);
       res.sendStatus(200);
       return;
     }
 
-    // -- BOT INTERVENTION CHECK
     const botActive = await checkBotIntervention(phone);
     if (!botActive) {
       await updateActiveLead(phone, { lastMsg: text });
@@ -698,24 +629,25 @@ app.post("/webhook", async (req, res) => {
       const updates = { lastMsg: text };
       if (extractedDate) {
         updates.wedding = extractedDate;
-        console.log(`Wedding date extracted: "${extractedDate}" for ${phone}`);
+        console.log(`Wedding date extracted: "${extractedDate}"`);
       }
       if (extractedLocation) {
         updates.city = extractedLocation;
-        console.log(`Location extracted: "${extractedLocation}" for ${phone}`);
+        console.log(`Location extracted: "${extractedLocation}"`);
       }
       await updateActiveLead(phone, updates);
       res.sendStatus(200);
       return;
     }
+
     if (isNewLead) {
       const lead = isAdDM(text) ? {} : extractLeadDetails(text);
       const firstName = lead.name ? lead.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
       const source = isAdDM(text) ? "Ad DM" : "Meta Form";
 
-      console.log(`NEW LEAD: ${firstName || "unknown"} | ${phone} | ${source}`);
+      console.log(`NEW LEAD: ${firstName} | ${phone} | ${source}`);
 
-      await addActiveLead(phone, firstName, lead.wedding, lead.city, source, "🆕 New Lead", text);
+      await addActiveLead(phone, firstName, lead.wedding, lead.city, source, "New Lead", text);
 
       await new Promise(r => setTimeout(r, 2000));
       await sendMenuButtons(phone);
@@ -732,13 +664,12 @@ app.post("/webhook", async (req, res) => {
         : detectMenuSelection(text);
 
       if (selection && ["A","B","C","D","E"].includes(selection)) {
+        console.log(`PATH ${selection} SELECTED: ${phone}`);
         pendingMenuSelect.delete(phone);
         customerPath.set(phone, selection);
 
-        const existingHistory = getHistory(phone);
-        const storedLead = { name: "", wedding: "", city: "" };
-
-        console.log(`PATH ${selection} selected by ${phone}`);
+        const customerName = name ? name.split(" ")[0] : "";
+        const response = getServiceResponse(selection, customerName);
 
         const pathLabels = {
           "A": "Pre-Bridal Package",
@@ -748,43 +679,34 @@ app.post("/webhook", async (req, res) => {
           "E": "Other Beauty Services",
         };
         await updateActiveLead(phone, {
-          status: `📂 ${pathLabels[selection]}`,
+          status: `Selected: ${selection}`,
           servicePath: pathLabels[selection],
         });
 
-        const contextMsg = buildPathContext(selection, storedLead.name, storedLead.wedding, storedLead.city, text);
-        console.log(`[DEBUG] Path ${selection} context: ${contextMsg.substring(0, 100)}...`);
-        const reply = await getAIReply(phone, contextMsg);
-        console.log(`[DEBUG] Claude reply for ${selection}: ${reply.substring(0, 100)}`);
-        const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
-        console.log(`[DEBUG] Sending ${parts.length} parts to ${phone}`);
-
-        await new Promise(r => setTimeout(r, 3000));
-        for (let i = 0; i < parts.length; i++) {
-          if (i > 0) await new Promise(r => setTimeout(r, 1800));
-          await sendText(phone, parts[i]);
-          lastSentMessage.set(phone, parts[i]);
-        }
+        console.log(`Sending service response for path ${selection}`);
+        await new Promise(r => setTimeout(r, 2000));
+        await sendText(phone, response);
+        lastSentMessage.set(phone, response);
         return;
       } else {
-        await sendText(phone, "Aap *A, B, C, D ya E* reply karein");
+        await sendText(phone, "Aap A, B, C, D ya E reply karein");
         return;
       }
     }
 
     let contextMsg = text;
     if (followupData) {
-      const firstName = followupData.name ? followupData.name.split(" ")[0] : (name ? name.split(" ")[0] : "");
-      console.log(`FOLLOWUP REPLY: ${firstName} (${phone})`);
+      const firstName = followupData.name ? followupData.name.split(" ")[0] : "Customer";
+      console.log(`FOLLOWUP REPLY: ${firstName}`);
       await markFollowupReplied(phone);
-      await addActiveLead(phone, firstName, followupData.wedding, followupData.city, "Followup", "🆕 New Lead", text);
-      contextMsg = `Customer replied to our outreach: "${text}". INSTRUCTION: Ask which service they are interested in, then offer details and ask for booking.`;
+      await addActiveLead(phone, firstName, followupData.wedding, followupData.city, "Followup", "New Lead", text);
+      contextMsg = `Customer replied to our outreach: "${text}". Ask which service interested.`;
     }
 
     const reply = await getAIReply(phone, contextMsg);
     const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
 
-    await new Promise(r => setTimeout(r, 5500));
+    await new Promise(r => setTimeout(r, 2000));
 
     const lastSent = lastSentMessage.get(phone) || "";
     for (let i = 0; i < parts.length; i++) {
@@ -801,11 +723,9 @@ app.post("/webhook", async (req, res) => {
       const updates = { lastMsg: text, status: detectStatus(reply, text) };
       if (extractedDate) {
         updates.wedding = extractedDate;
-        console.log(`Wedding date extracted: "${extractedDate}" for ${phone}`);
       }
       if (extractedLocation) {
         updates.city = extractedLocation;
-        console.log(`Location extracted: "${extractedLocation}" for ${phone}`);
       }
       await updateActiveLead(phone, updates);
     } else {
@@ -821,19 +741,18 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// -- ADMIN PANEL
 app.get("/admin", (req, res) => {
   const defaultMsg = `We have received your inquiry on our advertisement for Pre-Bridal Package. Please let us know your marriage date and location.\n\nRegards,\nBeauty Box Makeup Studio by Garima Nagpal`;
   res.setHeader("Content-Type", "text/html");
   res.send(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Beauty Box Admin v3.0</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}button.secondary{background:#555;margin-top:8px}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="container"><div class="card"><h2>New Chat</h2><p>Send opening message and start bot</p><label>Phone number (with country code, no +)</label><input id="ph" type="tel" placeholder="919999999999"><label>Customer name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message</label><textarea id="omsg">${defaultMsg}</textarea><div class="hint">Edit before sending. Bot takes over after customer replies.</div><label>Admin key</label><input id="ky" type="password" placeholder="Enter admin key"><button onclick="goNew(true)">Send Message & Activate Bot</button><button class="secondary" onclick="goNew(false)">Activate Bot Only</button><div class="msg" id="msg1"></div><small>Bot handles all replies automatically (v3.0)</small></div><div class="card"><h2>Reactivate Customer</h2><p>Load customer history & continue conversation</p><label>Customer phone (with country code, no +)</label><input id="rph" type="tel" placeholder="919999999999"><label>Follow-up message</label><textarea id="rmsg" placeholder="Hi! Kaunsi service interested ho?">Hi! Kaunsi service ke baare mein jaanna chahti ho?</textarea><div class="hint">Leave blank to just reactivate.</div><label>Admin key</label><input id="rky" type="password" placeholder="Enter admin key"><button onclick="goReactivate()">Reactivate & Continue</button><div class="msg" id="msg2"></div><small>Bot will read their history and resume (v3.0)</small></div></div><script>async function goNew(sendMsg){const ph=document.getElementById('ph').value.trim();const nm=document.getElementById('nm').value.trim();const ky=document.getElementById('ky').value.trim();const om=document.getElementById('omsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:nm,key:ky,openingMessage:sendMsg?om:'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh(sendMsg?'Sent to '+ph+'. Bot activated!':'Bot activated for '+ph,'ok','msg1');document.getElementById('ph').value='';document.getElementById('nm').value='';}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}async function goReactivate(){const ph=document.getElementById('rph').value.trim();const ky=document.getElementById('rky').value.trim();const rmsg=document.getElementById('rmsg').value.trim();if(!ph||!ky){sh('Enter phone and admin key','err','msg2');return;}try{const r=await fetch('/admin/reactivate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,key:ky,message:rmsg})});const d=await r.json();if(d.success){sh('Reactivated '+d.message.split('.')[0],'ok','msg2');document.getElementById('rph').value='';document.getElementById('rmsg').value='';}else sh(d.error||'Error','err','msg2');}catch(e){sh('Network error','err','msg2');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}document.getElementById('ky').addEventListener('keydown',e=>{if(e.key==='Enter')goNew(true);});document.getElementById('rky').addEventListener('keydown',e=>{if(e.key==='Enter')goReactivate();});</script></body></html>`);
+<style>*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.container{display:flex;gap:16px;width:100%;max-width:900px;flex-wrap:wrap}.card{background:#fff;border-radius:16px;padding:28px 24px;flex:1;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px}input:focus{border-color:#128C7E}textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;resize:vertical;min-height:100px;line-height:1.6;font-family:-apple-system,sans-serif}textarea:focus{border-color:#128C7E}.hint{font-size:11px;color:#aaa;margin-top:4px}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}button.secondary{background:#555;margin-top:8px}small{display:block;font-size:12px;color:#aaa;text-align:center;margin-top:12px;line-height:1.5}</style></head><body><div class="container"><div class="card"><h2>New Chat</h2><p>Send opening message and start bot</p><label>Phone (with country code)</label><input id="ph" type="tel" placeholder="919999999999"><label>Name (optional)</label><input id="nm" type="text" placeholder="Priya"><label>Opening message</label><textarea id="omsg">${defaultMsg}</textarea><label>Admin key</label><input id="ky" type="password" placeholder="beautybox2024"><button onclick="goNew(true)">Send & Activate</button><div class="msg" id="msg1"></div></div></div><script>async function goNew(sendMsg){const ph=document.getElementById('ph').value.trim();const ky=document.getElementById('ky').value.trim();if(!ph||!ky){sh('Enter phone and key','err','msg1');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:document.getElementById('nm').value.trim(),key:ky,openingMessage:sendMsg?document.getElementById('omsg').value.trim():'',sendMessage:sendMsg})});const d=await r.json();if(d.success){sh('Bot activated for '+ph,'ok','msg1');}else sh(d.error||'Error','err','msg1');}catch(e){sh('Network error','err','msg1');}}function sh(t,c,id){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block';}</script></body></html>`);
 });
 
 app.post("/admin/start", async (req, res) => {
   const { phone, name, key } = req.body;
   if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
-  if (!phone) return res.json({ success: false, error: "Phone number required" });
+  if (!phone) return res.json({ success: false, error: "Phone required" });
   try {
     const sendMsg = req.body.sendMessage !== false;
     const firstName = name ? name.trim().split(" ")[0] : "";
@@ -846,7 +765,7 @@ app.post("/admin/start", async (req, res) => {
       manualOnlyChats.add(phone);
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
-      await addActiveLead(phone, firstName, "", "", "Admin Initiated", "💬 Conversation Started", openingMsg);
+      await addActiveLead(phone, firstName, "", "", "Admin Initiated", "Conversation Started", openingMsg);
       console.log(`ADMIN: Message sent for ${phone}`);
     } else {
       conversations.set(phone, []);
@@ -854,7 +773,7 @@ app.post("/admin/start", async (req, res) => {
       manualOnlyChats.add(phone);
       lastMessageTime.set(phone, Date.now());
       nudgeSent.set(phone, false);
-      await addActiveLead(phone, firstName, "", "", "Admin Activated", "🆕 New Lead", "Manually activated");
+      await addActiveLead(phone, firstName, "", "", "Admin Activated", "New Lead", "Manually activated");
       console.log(`ADMIN: Activated ${phone}`);
     }
     res.json({ success: true });
@@ -863,61 +782,6 @@ app.post("/admin/start", async (req, res) => {
   }
 });
 
-app.post("/admin/reactivate", async (req, res) => {
-  const { phone, key, message } = req.body;
-  if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong admin key" });
-  if (!phone) return res.json({ success: false, error: "Phone number required" });
-  
-  try {
-    const customerData = await getCustomerData(phone);
-    if (!customerData) {
-      return res.json({ success: false, error: "Customer not found in records" });
-    }
-
-    const firstName = customerData.name ? customerData.name.split(" ")[0] : "Customer";
-    const servicePath = customerData.servicePath || "Unknown";
-
-    console.log(`REACTIVATING: ${firstName} (${phone}) | Path: ${servicePath}`);
-
-    if (!conversations.has(phone)) {
-      conversations.set(phone, []);
-    }
-    const history = getHistory(phone);
-    
-    addToHistory(phone, "system", `[REACTIVATED] Previous path: ${servicePath}. Last status: ${customerData.status}`);
-
-    manualOnlyChats.delete(phone);
-
-    lastMessageTime.set(phone, Date.now());
-    nudgeSent.set(phone, false);
-
-    let sentMessage = "";
-    if (message && message.trim()) {
-      await sendText(phone, message);
-      addToHistory(phone, "assistant", message);
-      sentMessage = message;
-      console.log(`Reactivation message sent to ${phone}`);
-    }
-
-    res.json({
-      success: true,
-      message: `Reactivated ${firstName}. Previous path: ${servicePath}. Ready to continue.`,
-      customerData: {
-        name: firstName,
-        phone,
-        servicePath,
-        wedding: customerData.wedding,
-        city: customerData.city,
-        lastStatus: customerData.status,
-      }
-    });
-  } catch (err) {
-    console.error("Reactivate error:", err.message);
-    res.json({ success: false, error: err.message });
-  }
-});
-
-// -- HEALTH CHECK
 app.get("/", (req, res) => {
   res.json({
     agent: "Beauty Box AI Agent v3.0",
@@ -932,7 +796,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// -- DAILY STATUS REPORT
 async function sendDailyReport() {
   try {
     if (!sheetsClient) return;
@@ -967,21 +830,24 @@ function scheduleDailyReport() {
   console.log(`Daily report scheduled in ${Math.round(delay/1000/60)} minutes`);
 }
 
-// -- STARTUP
 app.listen(PORT, async () => {
-  console.log(`\n🚀 Beauty Box Agent v3.0 on port ${PORT}`);
-  console.log(`✨ Flow: Inquiry -- Service Menu -- Details + Price -- Booking`);
-  console.log(`📋 ALL leads added to Google Sheets immediately`);
-  console.log(`🔑 Claude:  ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
-  console.log(`📱 WAPI:    ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
-  console.log(`🔐 Token:   ${WAPI_TOKEN ? "OK" : "MISSING"}`);
-  console.log(`📊 Sheet ID: ${SHEET_ID ? "OK" : "MISSING"}`);
-  console.log(`🔒 Admin:   /admin (key: ${ADMIN_KEY})`);
+  console.log(`\n=== BEAUTY BOX BOT v3.0 ===`);
+  console.log(`Port: ${PORT}`);
+  console.log(`BOT_ACTIVE: ${BOT_ACTIVE}`);
+  console.log(`Flow: Inquiry -- Service Menu -- Details + Price -- Booking`);
+  console.log(`All leads tracked: YES`);
+  console.log(`\nSetup:`);
+  console.log(`Claude: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
+  console.log(`WAPI: ${WAPI_VENDOR_UID ? "OK" : "MISSING"}`);
+  console.log(`Sheet: ${SHEET_ID ? "OK" : "MISSING"}`);
+  
   await initSheets();
   scheduleDailyReport();
   scheduleNudgeCheck();
-  console.log(`🔔 Nudge system: active (24h silence trigger)`);
-  console.log(`📋 Menu system: active (A/B/C/D/E paths)`);
-  console.log(`📍 Location extraction: active`);
-  console.log(`✅ All systems ready (v3.0)\n`);
+  
+  console.log(`\nMenu System: Active (A/B/C/D/E paths)`);
+  console.log(`Nudge System: Active (24h silence trigger)`);
+  console.log(`Location Extraction: Active`);
+  console.log(`Admin Panel: /admin`);
+  console.log(`\nAll systems ready\n`);
 });
