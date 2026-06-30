@@ -427,11 +427,11 @@ function buildPathContext(selectedPath, customerName, wedding, city, customerMsg
     case "B":
       return `Customer selected: Pre-Bridal + Bridal Makeup Combo. Name: ${name}. INSTRUCTION: Share combo package details and pricing. Ask when they want to book. NO trust building.`;
     case "C":
-      return `Customer selected: Hydra Facial Package. Name: ${name}. INSTRUCTION: Share Hydra package details and pricing. Ask when they want to book. Keep it short.`;
+      return `Customer selected: Hydra Facial Package. Name: ${name}. INSTRUCTION: Share Hydra Facial Package details: Single sitting Rs.999 OR 3-Sitting Package Rs.2,799 (recommended). Benefits: Deep hydration, brightening, skin barrier restore. Then ask: "Kab convenient hoga aapko?" Keep response to 2-3 sentences max.`;
     case "D":
-      return `Customer selected: Nail Services. Name: ${name}. INSTRUCTION: Share Nail Services details and pricing. Ask when they want to book.`;
+      return `Customer selected: Nail Services. Name: ${name}. INSTRUCTION: Share Nail Services Launch Offer: Rs.499 (Normal: Rs.1,200-1,500). Professional team. Ask: "Kab convenient hoga aapko?" Keep it short (2 sentences).`;
     case "E":
-      return `Customer selected: Other Beauty Services. Name: ${name}. INSTRUCTION: Ask which specific service they want, then share price. Ask for booking.`;
+      return `Customer selected: Other Beauty Services. Name: ${name}. INSTRUCTION: Ask which specific service they want (facials, hair, waxing, makeup, etc), then share price. Ask for booking.`;
     default:
       return `Customer message: "${customerMsg}". Name: ${name}. Respond and ask for booking.`;
   }
@@ -534,19 +534,26 @@ async function getAIReply(phone, contextMsg) {
   const liveInstructions = adminInstructions.length > 0
     ? "\n\nLIVE INSTRUCTIONS FROM ADMIN:\n" + adminInstructions.map((ins, i) => (i+1) + ". " + ins).join("\n")
     : "";
-  const res = await axios.post(
-    "https://api.anthropic.com/v1/messages",
-    {
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 300,
-      system: SYSTEM_PROMPT + liveInstructions,
-      messages: getHistory(phone)
-    },
-    { headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" } }
-  );
-  const reply = res.data.content?.[0]?.text || "Ek second.";
-  addToHistory(phone, "assistant", reply);
-  return reply;
+  try {
+    const res = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 300,
+        system: SYSTEM_PROMPT + liveInstructions,
+        messages: getHistory(phone)
+      },
+      { headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" } }
+    );
+    const reply = res.data.content?.[0]?.text || "Ek second.";
+    addToHistory(phone, "assistant", reply);
+    return reply;
+  } catch (err) {
+    console.error(`Claude API error for ${phone}:`, err.message);
+    const fallback = "Aap kaunsi service ke baare mein jaanna chahti ho? A, B, C, D ya E option select karein.";
+    addToHistory(phone, "assistant", fallback);
+    return fallback;
+  }
 }
 
 // -- PARSE WEBHOOK
@@ -746,8 +753,11 @@ app.post("/webhook", async (req, res) => {
         });
 
         const contextMsg = buildPathContext(selection, storedLead.name, storedLead.wedding, storedLead.city, text);
+        console.log(`[DEBUG] Path ${selection} context: ${contextMsg.substring(0, 100)}...`);
         const reply = await getAIReply(phone, contextMsg);
+        console.log(`[DEBUG] Claude reply for ${selection}: ${reply.substring(0, 100)}`);
         const parts = reply.split("|").map(p => p.trim()).filter(Boolean);
+        console.log(`[DEBUG] Sending ${parts.length} parts to ${phone}`);
 
         await new Promise(r => setTimeout(r, 3000));
         for (let i = 0; i < parts.length; i++) {
