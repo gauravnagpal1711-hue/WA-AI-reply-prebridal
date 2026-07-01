@@ -319,7 +319,7 @@ Makeup: HD (Rs.1,999) | Silicon HD (Rs.2,999)`;
   }
 }
 
-async function sendText(toPhone, text) {
+async function sendText(toPhone, text, retries = 2) {
   try {
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
     await axios.post(url, {
@@ -329,11 +329,19 @@ async function sendText(toPhone, text) {
     });
     console.log(`✅ Text sent to ${toPhone}`);
   } catch (err) {
-    console.error(`❌ Send failed:`, err?.response?.data?.message || err.message);
+    const status = err?.response?.status;
+    console.error(`❌ Send failed (Status ${status}): ${err?.response?.data?.message || err.message}`);
+    
+    // Retry on 503, 429 (server errors)
+    if ((status === 503 || status === 429) && retries > 0) {
+      console.log(`⏳ Retrying in 2 seconds... (${retries} retries left)`);
+      await new Promise(r => setTimeout(r, 2000));
+      return sendText(toPhone, text, retries - 1);
+    }
   }
 }
 
-async function sendPDF(toPhone, pdfUrl, caption) {
+async function sendPDF(toPhone, pdfUrl, caption, retries = 2) {
   try {
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
     await axios.post(url, {
@@ -347,7 +355,17 @@ async function sendPDF(toPhone, pdfUrl, caption) {
     });
     console.log(`✅ PDF sent to ${toPhone}`);
   } catch (err) {
-    console.error(`❌ PDF failed:`, err?.response?.data?.message || err.message);
+    const status = err?.response?.status;
+    console.error(`❌ PDF failed (Status ${status}): ${err?.response?.data?.message || err.message}`);
+    
+    // Retry on 503, 429
+    if ((status === 503 || status === 429) && retries > 0) {
+      console.log(`⏳ Retrying PDF in 2 seconds... (${retries} retries left)`);
+      await new Promise(r => setTimeout(r, 2000));
+      return sendPDF(toPhone, pdfUrl, caption, retries - 1);
+    }
+    
+    // Fallback: send as text link
     await sendText(toPhone, `PDF: ${pdfUrl}`);
   }
 }
