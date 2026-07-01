@@ -480,12 +480,6 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Check Bot Intervention
-    const botCanReply = await checkBotIntervention(phone);
-    if (!botCanReply) {
-      return res.sendStatus(200);
-    }
-
     lastMessageTime.set(phone, Date.now());
 
     // NEW LEAD - Send menu
