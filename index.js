@@ -1,164 +1,32 @@
 const express = require("express");
 const axios = require("axios");
-const path = require("path");
 const { google } = require("googleapis");
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname)));
 
-const PORT = process.env.PORT || 3000;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+// CONFIG
+const PORT = process.env.PORT || 8080;
 const WAPI_VENDOR_UID = process.env.WAPI_VENDOR_UID || "";
 const WAPI_TOKEN = process.env.WAPI_TOKEN || "";
-const ADMIN_KEY = process.env.ADMIN_KEY || "beautybox2024";
-const BOT_ACTIVE = true;
 const SHEET_ID = process.env.SHEET_ID || "";
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const PREBRIDAL_PDF_URL = process.env.PREBRIDAL_PDF_URL || "https://bit.ly/4fbKIox";
+const BRIDAL_MAKEUP_PDF_URL = process.env.BRIDAL_MAKEUP_PDF_URL || "";
+const ADMIN_PHONE = "919560277217";
+const GARIMA_PHONE = "919354260517";
+const STUDIO_ADDRESS = "H1/11, near Gurudwara, Vikaspuri, Delhi";
+const INSTAGRAM_ID = "@garimanagpalmua";
+const INSTAGRAM_URL = "https://www.instagram.com/garimanagpalmua/";
 
-let sheetsClient = null;
+let sheetsClient;
+let BOT_ACTIVE = false;
 
-async function initSheets() {
-  try {
-    if (!process.env.GOOGLE_CREDENTIALS || !SHEET_ID) {
-      console.log("⚠️ Sheets disabled -- credentials or SHEET_ID missing");
-      return;
-    }
-    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-    const auth = new google.auth.GoogleAuth({
-      credentials: creds,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
-    sheetsClient = google.sheets({ version: "v4", auth });
-    console.log("✅ Google Sheets connected");
-  } catch (err) {
-    console.error("❌ Sheets init failed:", err.message);
-  }
-}
-
-async function findRow(sheetName, phone) {
-  if (!sheetsClient) return -1;
-  try {
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${sheetName}!A:A`,
-    });
-    const rows = res.data.values || [];
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] && rows[i][0].toString().replace(/\D/g, "").endsWith(phone.replace(/\D/g, ""))) {
-        return i + 1;
-      }
-    }
-    return -1;
-  } catch (err) {
-    console.error("❌ findRow error:", err.message);
-    return -1;
-  }
-}
-
-async function addActiveLead(phone, name, source, lastMsg) {
-  if (!sheetsClient) {
-    console.log("⚠️ Sheets not connected");
-    return;
-  }
-  try {
-    const existing = await findRow("Active Leads", phone);
-    if (existing > 0) return;
-
-    const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-    await sheetsClient.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: "Active Leads!A:K",
-      valueInputOption: "RAW",
-      resource: {
-        values: [[
-          phone,
-          name || "",
-          "",
-          "",
-          source || "WhatsApp",
-          "New Lead",
-          (lastMsg || "").substring(0, 200),
-          now,
-          now,
-          "",
-          "Yes",
-        ]],
-      },
-    });
-    console.log(`✅ Lead added to Sheets: ${phone}`);
-  } catch (err) {
-    console.error("❌ addActiveLead error:", err.message);
-  }
-}
-
-async function updateActiveLead(phone, updates) {
-  if (!sheetsClient) return;
-  try {
-    const row = await findRow("Active Leads", phone);
-    if (row < 1) return;
-
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:K${row}`,
-    });
-    const current = res.data.values?.[0] || ["", "", "", "", "", "", "", "", "", "", "Yes"];
-    const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-
-    const updated = [
-      current[0] || phone,
-      updates.name || current[1] || "",
-      current[2] || "",
-      current[3] || "",
-      current[4] || "",
-      updates.status || current[5] || "Active",
-      (updates.lastMsg || current[6] || "").substring(0, 200),
-      current[7] || now,
-      now,
-      updates.servicePath || current[9] || "",
-      current[10] || "Yes",
-    ];
-
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: `Active Leads!A${row}:K${row}`,
-      valueInputOption: "RAW",
-      resource: { values: [updated] },
-    });
-  } catch (err) {
-    console.error("❌ updateActiveLead error:", err.message);
-  }
-}
-
-async function checkBotIntervention(phone) {
-  if (!sheetsClient) return true;
-  try {
-    const row = await findRow("Active Leads", phone);
-    if (row < 1) return true;
-
-    const res = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `Active Leads!K${row}`,
-    });
-    const val = res.data.values?.[0]?.[0] || "Yes";
-    const isOn = val.toString().trim().toLowerCase() === "yes" || val.toString().trim() === "" || val.toString().trim().toLowerCase() === "y";
-    
-    console.log(`🔍 Bot Intervention check for ${phone}: ${isOn ? "✅ ON" : "❌ OFF"}`);
-    return isOn;
-  } catch (err) {
-    return true;
-  }
-}
-
+// MEMORY
 const conversations = new Map();
-const pendingMenuSelect = new Set();
 const customerPath = new Map();
-const contactMessageSent = new Map();
-
-function getHistory(phone) {
-  if (!conversations.has(phone)) conversations.set(phone, []);
-  return conversations.get(phone);
-}
+const customerState = new Map(); // Track question stage for each customer
+const pendingMenuSelect = new Set();
 
 const MENU_TEXT_EN = `Welcome to Beauty Box Makeup Studio 💄
 
@@ -184,80 +52,39 @@ Aap kaunsi service ke baare mein jaanna chahti hain?
 
 Reply A, B, C, D ya E karein`;
 
-// Detect if customer used Hinglish/Hindi
+// ==================== INIT ====================
+
+async function initSheets() {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS || "{}"),
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+    sheetsClient = google.sheets({ version: "v4", auth });
+    console.log("✅ Google Sheets connected");
+  } catch (err) {
+    console.error("❌ Sheets init error:", err.message);
+  }
+}
+
+app.listen(PORT, async () => {
+  console.log(`\n🎉 BEAUTY BOX BOT v6.0 - STARTING`);
+  console.log(`Port: ${PORT}`);
+  console.log(`🔗 WAPI: Connected`);
+  await initSheets();
+  console.log(`📋 PDF: ${PREBRIDAL_PDF_URL}`);
+  console.log(`💄 Studio: ${STUDIO_ADDRESS}`);
+  console.log(`📸 Instagram: ${INSTAGRAM_ID}`);
+  console.log(`✅ Ready for WhatsApp messages!\n`);
+  BOT_ACTIVE = true;
+});
+
+// ==================== HELPERS ====================
+
 function isHinglish(text) {
   const hinglishWords = ["kab", "kaunsa", "kya", "aap", "ho", "hai", "nahi", "haan", "bilkul", "theek", "mein", "ke", "se", "ko", "aur", "ya", "hum", "tum", "mere", "iska", "woh", "yeh", "agar", "to", "lekin", "shaadi"];
   const lower = text.toLowerCase();
   return hinglishWords.some(word => lower.includes(word));
-}
-
-// Language-specific messages
-const MESSAGES = {
-  studioVisit: {
-    en: `📍 *Studio Visit Booking:*\n\nWhen can you visit our studio?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nWhich day and time is convenient for you?`,
-    hi: `📍 *Studio Visit Booking:*\n\nAap studio mein kab visit kar sakte ho?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nAapke liye kaunsa din aur time convenient hai?`
-  },
-  
-  weddingDate: {
-    en: `💍 *Wedding Date*\n\nWhen is your wedding?\n\n(E.g., June 2025, July 15)`,
-    hi: `💍 *Shaadi ki tarikhi*\n\nAapki shaadi kab hai?\n\n(E.g., June 2025, July 15)`
-  },
-  
-  location: {
-    en: `📌 *Location*\n\nWhich area are you from?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`,
-    hi: `📌 *Area*\n\nAap kaunse area se ho?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`
-  },
-  
-  timingReply: {
-    en: `Available timings: 10 AM to 8 PM, Tuesday to Sunday\n\nWhich day and time works best for you?`,
-    hi: `Available timing: 10 AM to 8 PM, Tuesday to Sunday\n\nAap kaunse din aur kaunse time mein aa sakte ho?`
-  },
-  
-  addressReply: {
-    en: `*Studio Address:*\nH1/11, near Gurudwara\nVikaspuri, Delhi\n\n🚇 *Near:* Janakpuri West Metro Station\n📞 Contact: +91 93542 60517`,
-    hi: `*Studio Address:*\nH1/11, near Gurudwara\nVikaspuri, Delhi\n\n🚇 *Paas:* Janakpuri West Metro Station\n📞 Contact: +91 93542 60517`
-  },
-  
-  priceA: {
-    en: `*PRE-BRIDAL PACKAGE*\n\nPrice: Rs. 7,499\n(Market Value: Rs. 16,800 - 71% OFF)\n\n12 services in 3 sittings`,
-    hi: `*PRE-BRIDAL PACKAGE*\n\nPrice: Rs. 7,499\n(Market Value: Rs. 16,800 - 71% OFF)\n\n12 services in 3 sittings`
-  },
-  
-  priceB: {
-    en: `*PRE-BRIDAL + BRIDAL MAKEUP*\n\nPrice: Rs. 16,500\n(Includes 12 pre-bridal services + Bridal makeup)`,
-    hi: `*PRE-BRIDAL + BRIDAL MAKEUP*\n\nPrice: Rs. 16,500\n(Includes 12 pre-bridal services + Bridal makeup)`
-  },
-  
-  confirmation: {
-    en: `Perfect! 🎉\n\nWe'll send your details to Garima.\nShe'll confirm with you soon.\n\n*Garima:* +91 93542 60517\nYou can WhatsApp or call directly.`,
-    hi: `Perfect! 🎉\n\nHum Garima ma'am ko aapke details bhej denge.\nVo aapko confirm karengi.\n\n*Garima ma'am:* +91 93542 60517\nDirect WhatsApp/Call kar sakte ho.`
-  },
-  
-  instagram: {
-    en: `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`,
-    hi: `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`
-  },
-  
-  generalQuestion: {
-    en: `Any other questions?\n\nGarima: +91 93542 60517`,
-    hi: `Koi aur question?\n\nGarima ma'am: +91 93542 60517`
-  }
-};
-
-function getMessage(key, useHinglish = false) {
-  return useHinglish ? (MESSAGES[key].hi || MESSAGES[key].en) : (MESSAGES[key].en || MESSAGES[key].hi);
-}
-
-function detectLanguage(text) {
-  const hindiKeywords = ["kab", "kya", "hai", "aap", "hun", "mein", "ke", "aur", "tha", "ho", "kar", "chahti", "chahta", "ko", "se", "ki", "na", "ya"];
-  const text_lower = text.toLowerCase();
-  
-  let hindiCount = 0;
-  for (const keyword of hindiKeywords) {
-    if (text_lower.includes(keyword)) hindiCount++;
-  }
-  
-  return hindiCount >= 2 ? "hinglish" : "english";
 }
 
 function detectMenuSelection(text) {
@@ -270,54 +97,14 @@ function detectMenuSelection(text) {
   return null;
 }
 
-function getServiceResponse(selection, customerName) {
-  const name = customerName ? `${customerName}, ` : "";
-
-  switch (selection) {
-    case "A":
-      return `${name}*PRE-BRIDAL PACKAGE - Rs.7,499* (Market Value Rs.16,800 - Save Rs.12,001 / 71% OFF)
-
-*12 Services in 3 Sittings:*
-
-*1st Sitting:* O3+ Facial, Bleach/D-Tan
-*2nd Sitting:* Full Body Bleach, Manicure, Pedicure, Loreal Hair Spa
-*3rd Sitting:* Full Body Wax, Polishing, Nail Extension, Face Bleach & O3+ Facial, Threading & Upper Lips
-
-Premium Products | Hygienic Care | Flexible Appointments`;
-
-    case "B":
-      return `${name}*PRE-BRIDAL + BRIDAL MAKEUP COMBO - Rs.16,500* (Save Rs.1,999)
-
-Includes:
-- Complete Pre-Bridal Package (12 services in 3 sittings)
-- Bridal Makeup (Waterproof, Soft Glam, Lashes & Lenses, Draping + Hairstyle)`;
-
-    case "C":
-      return `${name}*HYDRA FACIAL PACKAGE*
-
-*Single Sitting:* Rs.1,199
-*3-Sitting Package:* Rs.2,999 (Recommended)
-
-Benefits: Deep hydration, Brightening, Skin barrier restore, 60-70% improvement`;
-
-    case "D":
-      return `${name}*NAIL SERVICES*
-
-Extension (Rs.599+) | Natural (Rs.349+) | Acrylic (Rs.699+) | Gel (Rs.899+)
-
-Pedicure: Classic (Rs.399) | Spa (Rs.449) | French (Rs.549) | Gel (Rs.749) | Korean (Rs.899)`;
-
-    case "E":
-      return `${name}*COMPLETE PRICE LIST*
-
-Facials (Rs.499-2,199) | Hair Care (Rs.149-3,999) | Cleanups (Rs.349-649)
-Waxing (Rs.199-1,999) | Manicure/Threading | Bleach (Rs.249-1,999)
-Makeup: HD (Rs.1,999) | Silicon HD (Rs.2,999)`;
-
-    default:
-      return "Aap service select karein. A, B, C, D ya E reply karein.";
+function getHistory(phone) {
+  if (!conversations.has(phone)) {
+    conversations.set(phone, []);
   }
+  return conversations.get(phone);
 }
+
+// ==================== WAPI FUNCTIONS ====================
 
 async function sendText(toPhone, text, retries = 2) {
   try {
@@ -332,7 +119,6 @@ async function sendText(toPhone, text, retries = 2) {
     const status = err?.response?.status;
     console.error(`❌ Send failed (Status ${status}): ${err?.response?.data?.message || err.message}`);
     
-    // Retry on 503, 429 (server errors)
     if ((status === 503 || status === 429) && retries > 0) {
       console.log(`⏳ Retrying in 2 seconds... (${retries} retries left)`);
       await new Promise(r => setTimeout(r, 2000));
@@ -358,86 +144,149 @@ async function sendPDF(toPhone, pdfUrl, caption, retries = 2) {
     const status = err?.response?.status;
     console.error(`❌ PDF failed (Status ${status}): ${err?.response?.data?.message || err.message}`);
     
-    // Retry on 503, 429
     if ((status === 503 || status === 429) && retries > 0) {
       console.log(`⏳ Retrying PDF in 2 seconds... (${retries} retries left)`);
       await new Promise(r => setTimeout(r, 2000));
       return sendPDF(toPhone, pdfUrl, caption, retries - 1);
     }
     
-    // Fallback: send as text link
     await sendText(toPhone, `PDF: ${pdfUrl}`);
   }
 }
+
+// ==================== GOOGLE SHEETS ====================
+
+async function findRow(sheetName, phone) {
+  try {
+    const res = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${sheetName}!A:A`,
+    });
+    const rows = res.data.values || [];
+    const row = rows.findIndex(r => r[0] && r[0].toString().includes(phone.replace(/\D/g, "")));
+    return row >= 0 ? row + 1 : -1;
+  } catch (err) {
+    console.error("❌ findRow error:", err.message);
+    return -1;
+  }
+}
+
+async function addActiveLead(phone, name, source, firstMsg) {
+  if (!sheetsClient) return;
+  try {
+    const row = await findRow("Active Leads", phone);
+    if (row >= 1) {
+      console.log(`📌 Lead exists at row ${row}`);
+      return;
+    }
+
+    const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+    const values = [
+      [
+        phone,
+        name || "Unknown",
+        "",
+        "",
+        "WhatsApp",
+        "New Lead",
+        firstMsg || "Initial",
+        now,
+        now,
+        "",
+        "",
+      ],
+    ];
+
+    await sheetsClient.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: "Active Leads!A:K",
+      valueInputOption: "RAW",
+      resource: { values },
+    });
+    console.log(`✅ Lead added to Sheets: ${phone}`);
+  } catch (err) {
+    console.error("❌ addActiveLead error:", err.message);
+  }
+}
+
+async function updateActiveLead(phone, updates) {
+  if (!sheetsClient) return;
+  try {
+    const row = await findRow("Active Leads", phone);
+    if (row < 1) return;
+
+    const res = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `Active Leads!A${row}:K${row}`,
+    });
+    
+    const current = res.data.values?.[0] || [];
+    const updated = [...current];
+
+    if (updates.weddingDate) updated[2] = updates.weddingDate;
+    if (updates.location) updated[3] = updates.location;
+    if (updates.servicePath) updated[9] = updates.servicePath;
+    if (updates.status) updated[5] = updates.status;
+    if (updates.lastMsg) updated[6] = updates.lastMsg;
+    updated[8] = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `Active Leads!A${row}:K${row}`,
+      valueInputOption: "RAW",
+      resource: { values: [updated] },
+    });
+  } catch (err) {
+    console.error("❌ updateActiveLead error:", err.message);
+  }
+}
+
+async function checkBotIntervention(phone) {
+  if (!sheetsClient) return true;
+  try {
+    const row = await findRow("Active Leads", phone);
+    if (row < 1) return true;
+
+    const res = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `Active Leads!K${row}`,
+    });
+    const val = res.data.values?.[0]?.[0] || "Yes";
+    const isOn = val.toString().trim().toLowerCase() === "yes" || val.toString().trim() === "" || val.toString().trim().toLowerCase() === "y";
+    
+    console.log(`🔍 Bot Intervention for ${phone}: ${isOn ? "✅ ON" : "❌ OFF"}`);
+    return isOn;
+  } catch (err) {
+    return true;
+  }
+}
+
+// ==================== WEBHOOK PARSING ====================
 
 function parseWebhook(body) {
   try {
     console.log("🔍 Parsing payload:", JSON.stringify(body).substring(0, 150));
     
-    // Try WhatsApp Cloud API format
-    const messages = body?.entry?.[0]?.changes?.[0]?.value?.messages;
-    if (messages?.length > 0) {
-      const msg = messages[0];
-      const contacts = body?.entry?.[0]?.changes?.[0]?.value?.contacts || [];
-      const phone = msg?.from || "";
-      const name = contacts[0]?.profile?.name || null;
-
-      console.log(`✅ WhatsApp Cloud format - Phone: ${phone}`);
-      return {
-        phone,
-        name,
-        text: msg?.text?.body || "",
-        hasMedia: !!msg?.type && msg.type !== "text",
-      };
-    }
-
-    // Try WAPI format - phone in contact, text in message
+    // WAPI format
     if (body?.contact?.phone_number || body?.data?.contact?.phone_number) {
       const phone = body?.contact?.phone_number || body?.data?.contact?.phone_number || "";
       const text = body?.message?.body || body?.data?.message?.body || "";
       const name = body?.contact?.first_name || body?.data?.contact?.first_name || null;
 
       console.log(`✅ WAPI format - Phone: ${phone}, Text: ${text.substring(0, 50)}`);
-      return {
-        phone,
-        name,
-        text,
-        hasMedia: false,
-      };
+      return { phone, name, text, hasMedia: false };
     }
 
-    // Try alternate WAPI format
-    if (body?.phone_number || body?.sender) {
-      const phone = body?.phone_number || body?.sender || "";
-      const text = body?.message || body?.text || "";
-      const name = body?.name || null;
-
-      console.log(`✅ Alternate format - Phone: ${phone}, Text: ${text.substring(0, 50)}`);
-      return {
-        phone,
-        name,
-        text,
-        hasMedia: false,
-      };
-    }
-
-    console.log("❌ Could not parse payload - unknown format");
-    console.log("Full payload:", JSON.stringify(body));
+    console.log("❌ Could not parse payload");
     return null;
   } catch (e) {
-    console.error("❌ Parse webhook error:", e.message);
+    console.error("❌ Parse error:", e.message);
     return null;
   }
 }
 
-// TEST WEBHOOK - For diagnostics
-app.post("/test-webhook", (req, res) => {
-  console.log("\n🧪 TEST WEBHOOK RECEIVED!");
-  console.log("Body sample:", JSON.stringify(req.body).substring(0, 100));
-  res.json({ success: true, message: "Test webhook working!" });
-});
+// ==================== WEBHOOK HANDLER ====================
 
-// MAIN WEBHOOK
 app.post("/webhook", async (req, res) => {
   try {
     console.log("\n📨 WEBHOOK REQUEST RECEIVED");
@@ -471,81 +320,125 @@ app.post("/webhook", async (req, res) => {
     const isExactTrigger = text.trim().toLowerCase() === "Hello! Can I get more info on this?".toLowerCase();
     const selection = detectMenuSelection(text);
 
-    // MENU SELECTION (happens after trigger)
+    // ==================== MENU SELECTION ====================
     if (pendingMenuSelect.has(phone) && selection) {
       console.log(`📋 PATH ${selection}: ${phone}`);
       pendingMenuSelect.delete(phone);
       customerPath.set(phone, selection);
+      customerState.set(phone, {}); // Initialize state
 
-      const customerName = name ? name.split(" ")[0] : "";
-      const response = getServiceResponse(selection, customerName);
+      await new Promise(r => setTimeout(r, 500));
 
-      // For Pre-Bridal paths (A & B), send PDF + studio visit flow
-      if (selection === "A" || selection === "B") {
-        console.log(`📄 Sending Pre-Bridal PDF for path ${selection}`);
-        
-        // Send service details
-        await new Promise(r => setTimeout(r, 1000));
-        await sendText(phone, response);
-
-        // Send PDF
-        await new Promise(r => setTimeout(r, 2000));
-        await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
-
-        // Send studio visit flow
-        await new Promise(r => setTimeout(r, 2000));
+      // PATH A: PRE-BRIDAL
+      if (selection === "A") {
+        console.log(`📦 PATH A: Pre-Bridal`);
         const useHinglish = isHinglish(text);
         
-        const studioMsg = useHinglish 
-          ? `📍 *Studio Visit Booking:*\n\nAap studio mein kab visit kar sakte ho?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nAapke liye kaunsa din aur time convenient hai?`
-          : `📍 *Studio Visit Booking:*\n\nWhen can you visit our studio?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nWhich day and time is convenient for you?`;
-        
-        await sendText(phone, studioMsg);
+        // Message 1: Intro
+        const msg1 = "Sharing complete pre-bridal offer details in PDF below 👇";
+        await sendText(phone, msg1);
 
-        // Ask for marriage date
+        // Message 2: PDF
         await new Promise(r => setTimeout(r, 1500));
-        const dateMsg = useHinglish
-          ? `💍 *Shaadi ki tarikhi*\n\nAapki shaadi kab hai?\n\n(E.g., June 2025, July 15)`
-          : `💍 *Wedding Date*\n\nWhen is your wedding?\n\n(E.g., June 2025, July 15)`;
-        
-        await sendText(phone, dateMsg);
+        await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
 
-        // Ask for location/area
-        await new Promise(r => setTimeout(r, 1500));
-        const locationMsg = useHinglish
-          ? `📌 *Area*\n\nAap kaunse area se ho?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`
-          : `📌 *Location*\n\nWhich area are you from?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`;
-        
-        await sendText(phone, locationMsg);
+        // Message 3: First question (wedding date)
+        await new Promise(r => setTimeout(r, 2000));
+        const msg3 = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
+        await sendText(phone, msg3);
 
-        // Set conversation state
-        conversations.set(phone, []);
-        getHistory(phone).push({ role: "assistant", content: response });
-        getHistory(phone).push({ role: "assistant", content: studioMsg });
-        getHistory(phone).push({ role: "assistant", content: dateMsg });
-        getHistory(phone).push({ role: "assistant", content: locationMsg });
-
-        await updateActiveLead(phone, {
-          status: `Path ${selection} - Collecting Studio Visit Details`,
-          servicePath: selection,
-        });
+        customerState.set(phone, { stage: "waiting_date" });
+        await updateActiveLead(phone, { status: "Path A - Waiting for Wedding Date", servicePath: "A" });
 
         return res.sendStatus(200);
-      } else {
-        // For other paths (C, D, E), just send service details
-        await new Promise(r => setTimeout(r, 1000));
-        await sendText(phone, response);
+      }
 
-        await updateActiveLead(phone, {
-          status: `Selected: ${selection}`,
-          servicePath: selection,
-        });
+      // PATH B: PRE-BRIDAL + BRIDAL
+      else if (selection === "B") {
+        console.log(`📦 PATH B: Pre-Bridal + Bridal`);
+        const useHinglish = isHinglish(text);
+        
+        // Message 1: Intro
+        const msg1 = "Sharing complete pre-bridal & bridal makeup offer details in PDF below 👇";
+        await sendText(phone, msg1);
+
+        // Message 2: Pre-Bridal PDF
+        await new Promise(r => setTimeout(r, 1500));
+        await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package");
+
+        // Message 3: Bridal Makeup PDF (if available)
+        if (BRIDAL_MAKEUP_PDF_URL) {
+          await new Promise(r => setTimeout(r, 1500));
+          await sendPDF(phone, BRIDAL_MAKEUP_PDF_URL, "Bridal Makeup Details");
+        } else {
+          await new Promise(r => setTimeout(r, 1500));
+          const msg3alt = "Bridal makeup can be discussed during your visit to studio 💄";
+          await sendText(phone, msg3alt);
+        }
+
+        // Message 4: Visit timing question
+        await new Promise(r => setTimeout(r, 1500));
+        const msg4 = useHinglish 
+          ? "Aap studio mein kab visit kar sakte ho?"
+          : "When can you visit our studio?";
+        await sendText(phone, msg4);
+
+        customerState.set(phone, { stage: "waiting_visit_time" });
+        await updateActiveLead(phone, { status: "Path B - Waiting for Visit Time", servicePath: "B" });
+
+        return res.sendStatus(200);
+      }
+
+      // PATH C: HYDRA FACIAL
+      else if (selection === "C") {
+        console.log(`📦 PATH C: Hydra Facial`);
+        const useHinglish = isHinglish(text);
+        
+        const msg = useHinglish
+          ? `💧 *Hydra Facial Special Offer:*\n\n• Single Sitting: Rs.1,199\n• 3-Sitting Combo: Rs.2,999 (Recommended)\n\nKab visit kar sakte ho?`
+          : `💧 *Hydra Facial Special Offer:*\n\n• Single Sitting: Rs.1,199\n• 3-Sitting Combo: Rs.2,999 (Recommended)\n\nWhen can you visit?`;
+        
+        await sendText(phone, msg);
+
+        customerState.set(phone, { stage: "waiting_visit_c" });
+        await updateActiveLead(phone, { status: "Path C - Waiting for Visit Time", servicePath: "C" });
+
+        return res.sendStatus(200);
+      }
+
+      // PATH D: NAIL SERVICES
+      else if (selection === "D") {
+        console.log(`📦 PATH D: Nail Services`);
+        
+        const msg = `💅 *Nail Services*\n\nStarting from Rs.399 onwards\n\nDesign options available:\n• French\n• Ombre\n• Glitter\n• Bridal Designs\n• Custom Designs`;
+        
+        await sendText(phone, msg);
+
+        customerState.set(phone, { stage: "done_d" }); // NO MORE QUESTIONS
+        await updateActiveLead(phone, { status: "Path D - Sent Details", servicePath: "D" });
+
+        return res.sendStatus(200);
+      }
+
+      // PATH E: OTHER BEAUTY SERVICES
+      else if (selection === "E") {
+        console.log(`📦 PATH E: Other Services`);
+        const useHinglish = isHinglish(text);
+        
+        const msg = useHinglish
+          ? "Aap kaunsi beauty service lena chahti hain?\n\n(Facials, Hair Care, Waxing, Bleach, Threading, etc.)"
+          : "Which beauty service are you interested in?\n\n(Facials, Hair Care, Waxing, Bleach, Threading, etc.)";
+        
+        await sendText(phone, msg);
+
+        customerState.set(phone, { stage: "waiting_service_e" });
+        await updateActiveLead(phone, { status: "Path E - Waiting for Service", servicePath: "E" });
 
         return res.sendStatus(200);
       }
     }
 
-    // NEW LEAD
+    // ==================== NEW LEAD ====================
     if (!hasHistory && isExactTrigger) {
       console.log(`🎯 NEW LEAD: ${phone}`);
       const firstName = name ? name.split(" ")[0] : "Unknown";
@@ -564,17 +457,11 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Ignore non-trigger messages without history
-    if (!hasHistory && !isExactTrigger && !selection) {
-      console.log(`⏭️ IGNORED: No trigger match and no menu selection`);
-      return res.sendStatus(200);
-    }
-
-    // CONTINUING CONVERSATION (for existing customers)
+    // ==================== CONTINUING CONVERSATION ====================
     if (hasHistory) {
       console.log(`💬 Continuing conversation: ${phone}`);
 
-      // CHECK BOT INTERVENTION EVERY TIME
+      // CHECK BOT INTERVENTION
       const canReply = await checkBotIntervention(phone);
       if (!canReply) {
         console.log(`🔕 Bot Intervention OFF - SILENT`);
@@ -583,201 +470,321 @@ app.post("/webhook", async (req, res) => {
 
       const lower = text.toLowerCase().trim();
       const selection = customerPath.get(phone);
+      const state = customerState.get(phone) || {};
 
-      // STUDIO VISIT FLOW (For Pre-Bridal paths A & B)
-      if ((selection === "A" || selection === "B") && getHistory(phone).length < 15) {
-        console.log(`💬 Studio visit conversation: ${phone}`);
+      // ==================== PATH A CONVERSATION ====================
+      if (selection === "A") {
+        console.log(`💬 Path A conversation`);
+        const useHinglish = isHinglish(text);
 
-        // Update sheet with customer details
-        await updateActiveLead(phone, { 
-          lastMsg: text,
-          status: "Collecting Studio Visit Details"
-        });
-
-        // Customer asking about timing/availability
-        if (lower.includes("time") || lower.includes("slot") || lower.includes("available") || lower.includes("kab")) {
-          console.log(`⏰ Customer asking about timing`);
-          await new Promise(r => setTimeout(r, 1000));
-          const useHinglish = isHinglish(text);
-          const timingMsg = useHinglish
-            ? `Available timing: 10 AM to 8 PM, Tuesday to Sunday\n\nAap kaunse din aur kaunse time mein aa sakte ho?`
-            : `Available timings: 10 AM to 8 PM, Tuesday to Sunday\n\nWhich day and time works best for you?`;
-          
-          await sendText(phone, timingMsg);
-          getHistory(phone).push({ role: "user", content: text });
-          getHistory(phone).push({ role: "assistant", content: timingMsg });
-          return res.sendStatus(200);
-        }
-
-        // Customer asking about location/address
-        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio")) {
-          console.log(`📍 Customer asking about location`);
-          await new Promise(r => setTimeout(r, 1000));
-          const addrMsg = `*Studio Address:*
-H1/11, near Gurudwara
-Vikaspuri, Delhi
-
-🚇 *Near:* Janakpuri West Metro Station
-📞 Contact: +91 93542 60517`;
-          
-          await sendText(phone, addrMsg);
-          getHistory(phone).push({ role: "user", content: text });
-          getHistory(phone).push({ role: "assistant", content: addrMsg });
-          return res.sendStatus(200);
-        }
-
-        // Customer asking about price/cost
-        if (lower.includes("price") || lower.includes("cost") || lower.includes("kitna") || lower.includes("kitne")) {
-          console.log(`💰 Customer asking about price`);
-          await new Promise(r => setTimeout(r, 1000));
-          let priceMsg = "";
-          if (selection === "A") {
-            priceMsg = `*PRE-BRIDAL PACKAGE*
-Price: Rs. 7,499
-(Market Value: Rs. 16,800 - 71% OFF)
-
-12 services in 3 sittings`;
-          } else if (selection === "B") {
-            priceMsg = `*PRE-BRIDAL + BRIDAL MAKEUP*
-Price: Rs. 16,500
-(Includes 12 pre-bridal services + Bridal makeup)`;
-          }
-          
-          await sendText(phone, priceMsg);
-          getHistory(phone).push({ role: "user", content: text });
-          getHistory(phone).push({ role: "assistant", content: priceMsg });
-          return res.sendStatus(200);
-        }
-
-        // Customer providing date/time info (just collect it)
-        if (lower.includes("next") || lower.includes("month") || lower.includes("week") || 
-            /\d{1,2}/.test(text) || lower.includes("morning") || lower.includes("evening") ||
-            lower.includes("afternoon") || lower.includes("am") || lower.includes("pm")) {
-          console.log(`📅 Customer provided date/time: ${text}`);
-          await new Promise(r => setTimeout(r, 1000));
-          
-          const useHinglish = isHinglish(text);
-          const confirmMsg = useHinglish
-            ? `Perfect! 🎉\n\nHum Garima ma'am ko aapke details bhej denge.\nVo aapko confirm karengi.\n\n*Garima ma'am:* +91 93542 60517\nDirect WhatsApp/Call kar sakte ho.`
-            : `Perfect! 🎉\n\nWe'll send your details to Garima.\nShe'll confirm with you soon.\n\n*Garima:* +91 93542 60517\nYou can WhatsApp or call directly.`;
-          
-          await sendText(phone, confirmMsg);
-          
-          await updateActiveLead(phone, {
-            status: "Ready for Garima Follow-up",
-            lastMsg: text
-          });
-          
-          getHistory(phone).push({ role: "user", content: text });
-          getHistory(phone).push({ role: "assistant", content: confirmMsg });
-          return res.sendStatus(200);
-        }
-
-        // Customer asking for Instagram
+        // Check for Instagram/Location requests FIRST
         if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
           console.log(`📸 Instagram request`);
-          await new Promise(r => setTimeout(r, 1000));
-          const useHinglish = isHinglish(text);
-          const instaMsg = useHinglish
-            ? `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`
-            : `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`;
+          await new Promise(r => setTimeout(r, 500));
+          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
           await sendText(phone, instaMsg);
           getHistory(phone).push({ role: "user", content: text });
           getHistory(phone).push({ role: "assistant", content: instaMsg });
+          // CONTINUE TO NEXT QUESTION
+          if (state.stage === "waiting_date") {
+            await new Promise(r => setTimeout(r, 1000));
+            const nextQ = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
+            await sendText(phone, nextQ);
+          }
           return res.sendStatus(200);
         }
 
-        // Default: Bot confused or doesn't understand - STAY SILENT
-        console.log(`❓ Unknown query - bot staying silent: ${text.substring(0, 60)}`);
+        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
+          console.log(`📍 Location request`);
+          await new Promise(r => setTimeout(r, 500));
+          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
+          await sendText(phone, locMsg);
+          getHistory(phone).push({ role: "user", content: text });
+          getHistory(phone).push({ role: "assistant", content: locMsg });
+          // CONTINUE TO NEXT QUESTION
+          if (state.stage === "waiting_date") {
+            await new Promise(r => setTimeout(r, 1000));
+            const nextQ = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
+            await sendText(phone, nextQ);
+          }
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR WEDDING DATE
+        if (state.stage === "waiting_date") {
+          console.log(`📅 Received wedding date`);
+          await new Promise(r => setTimeout(r, 500));
+          const nextQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
+          await sendText(phone, nextQ);
+          customerState.set(phone, { stage: "waiting_location" });
+          await updateActiveLead(phone, { weddingDate: text, lastMsg: text });
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR LOCATION
+        if (state.stage === "waiting_location") {
+          console.log(`📌 Received location`);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // NO MESSAGE - Just update sheet and end
+          customerState.set(phone, { stage: "done" });
+          await updateActiveLead(phone, { location: text, status: "Ready for Garima", lastMsg: text });
+          
+          console.log(`✅ Path A complete - conversation ended`);
+          return res.sendStatus(200);
+        }
+
+        // OTHERWISE STAY SILENT
+        console.log(`🤐 Path A - Unexpected message - staying silent`);
         return res.sendStatus(200);
       }
 
-      // GENERAL CONVERSATION (For non-PreBridal paths)
-      const lower2 = text.toLowerCase().trim();
+      // ==================== PATH B CONVERSATION ====================
+      if (selection === "B") {
+        console.log(`💬 Path B conversation`);
+        const useHinglish = isHinglish(text);
 
-      // Location request
-      if (lower2.includes("location") || lower2.includes("address") || lower2.includes("kahan") || lower2.includes("studio")) {
-        console.log(`📍 Location request`);
-        await new Promise(r => setTimeout(r, 1000));
-        const locationMsg = `*Studio Address:*\nH1/11, near Gurudwara\nVikaspuri, Delhi\n(Near Janakpuri West Metro)\n\n📞 +91 93542 60517\n⏰ Tue-Sun: 10 AM - 8 PM`;
-        await sendText(phone, locationMsg);
-        await updateActiveLead(phone, { status: "Asked Location" });
+        // Check for Instagram/Location requests FIRST
+        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
+          console.log(`📸 Instagram request`);
+          await new Promise(r => setTimeout(r, 500));
+          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
+          await sendText(phone, instaMsg);
+          // CONTINUE TO NEXT QUESTION
+          if (state.stage === "waiting_visit_time") {
+            await new Promise(r => setTimeout(r, 1000));
+            const nextQ = useHinglish 
+              ? "Aap studio mein kab visit kar sakte ho?"
+              : "When can you visit our studio?";
+            await sendText(phone, nextQ);
+          }
+          return res.sendStatus(200);
+        }
+
+        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
+          console.log(`📍 Location request`);
+          await new Promise(r => setTimeout(r, 500));
+          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
+          await sendText(phone, locMsg);
+          // CONTINUE TO NEXT QUESTION
+          if (state.stage === "waiting_visit_time") {
+            await new Promise(r => setTimeout(r, 1000));
+            const nextQ = useHinglish 
+              ? "Aap studio mein kab visit kar sakte ho?"
+              : "When can you visit our studio?";
+            await sendText(phone, nextQ);
+          }
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR VISIT TIME
+        if (state.stage === "waiting_visit_time") {
+          console.log(`📅 Received visit time`);
+          await new Promise(r => setTimeout(r, 500));
+          const nextQ = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
+          await sendText(phone, nextQ);
+          customerState.set(phone, { stage: "waiting_date_b" });
+          await updateActiveLead(phone, { lastMsg: text });
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR WEDDING DATE
+        if (state.stage === "waiting_date_b") {
+          console.log(`📅 Received wedding date`);
+          await new Promise(r => setTimeout(r, 500));
+          const nextQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
+          await sendText(phone, nextQ);
+          customerState.set(phone, { stage: "waiting_location_b" });
+          await updateActiveLead(phone, { weddingDate: text, lastMsg: text });
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR LOCATION
+        if (state.stage === "waiting_location_b") {
+          console.log(`📌 Received location`);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // NO MESSAGE - Just update sheet and end
+          customerState.set(phone, { stage: "done" });
+          await updateActiveLead(phone, { location: text, status: "Ready for Garima", lastMsg: text });
+          
+          console.log(`✅ Path B complete - conversation ended`);
+          return res.sendStatus(200);
+        }
+
+        // OTHERWISE STAY SILENT
+        console.log(`🤐 Path B - Unexpected message - staying silent`);
         return res.sendStatus(200);
       }
 
-      // Instagram request
-      if (lower2.includes("instagram") || lower2.includes("insta") || lower2.includes("follow")) {
-        console.log(`📸 Instagram request`);
-        await new Promise(r => setTimeout(r, 1000));
-        const instaMsg = `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`;
-        await sendText(phone, instaMsg);
-        await updateActiveLead(phone, { status: "Asked Instagram" });
+      // ==================== PATH C CONVERSATION ====================
+      if (selection === "C") {
+        console.log(`💬 Path C conversation`);
+        const useHinglish = isHinglish(text);
+
+        // Check for Instagram/Location requests
+        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
+          console.log(`📸 Instagram request`);
+          await new Promise(r => setTimeout(r, 500));
+          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
+          await sendText(phone, instaMsg);
+          // Re-ask visit question
+          await new Promise(r => setTimeout(r, 1000));
+          const msg = useHinglish ? "Kab visit kar sakte ho?" : "When can you visit?";
+          await sendText(phone, msg);
+          return res.sendStatus(200);
+        }
+
+        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
+          console.log(`📍 Location request`);
+          await new Promise(r => setTimeout(r, 500));
+          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
+          await sendText(phone, locMsg);
+          // Re-ask visit question
+          await new Promise(r => setTimeout(r, 1000));
+          const msg = useHinglish ? "Kab visit kar sakte ho?" : "When can you visit?";
+          await sendText(phone, msg);
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR VISIT TIME - once provided, end conversation
+        if (state.stage === "waiting_visit_c") {
+          console.log(`📅 Received visit time`);
+          // NO MESSAGE - Just update sheet and end
+          customerState.set(phone, { stage: "done" });
+          await updateActiveLead(phone, { status: "Ready for Garima", lastMsg: text });
+          
+          console.log(`✅ Path C complete - conversation ended`);
+          return res.sendStatus(200);
+        }
+
+        // OTHERWISE STAY SILENT
+        console.log(`🤐 Path C - Unexpected message - staying silent`);
         return res.sendStatus(200);
       }
 
-      // Booking intent
-      const bookingWords = ["book", "slot", "available", "kab", "call", "number", "price", "cost"];
-      const hasBooking = bookingWords.some(word => lower2.includes(word));
-      const alreadySent = contactMessageSent.get(phone);
+      // ==================== PATH D CONVERSATION ====================
+      if (selection === "D") {
+        console.log(`💬 Path D conversation`);
 
-      if (hasBooking && !alreadySent) {
-        console.log(`🎯 BOOKING INTENT - First time`);
-        contactMessageSent.set(phone, true);
-        await new Promise(r => setTimeout(r, 1000));
-        const contactMsg = `*Garima ma'am:*\n📱 +91 93542 60517`;
-        await sendText(phone, contactMsg);
-        await updateActiveLead(phone, { status: "Booking Inquiry" });
+        // Check for Instagram/Location requests ONLY
+        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
+          console.log(`📸 Instagram request`);
+          await new Promise(r => setTimeout(r, 500));
+          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
+          await sendText(phone, instaMsg);
+          return res.sendStatus(200);
+        }
+
+        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
+          console.log(`📍 Location request`);
+          await new Promise(r => setTimeout(r, 500));
+          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
+          await sendText(phone, locMsg);
+          return res.sendStatus(200);
+        }
+
+        // Check for booking request
+        if (lower.includes("book") || lower.includes("slot") || lower.includes("available") || lower.includes("kab")) {
+          console.log(`📞 Booking request - no auto-reply, customer will see WhatsApp from Garima number`);
+          customerState.set(phone, { stage: "done" });
+          return res.sendStatus(200);
+        }
+
+        // OTHERWISE STAY SILENT
+        console.log(`🤐 Path D - No Instagram/Location/Booking - staying silent`);
         return res.sendStatus(200);
       }
 
-      if (hasBooking && alreadySent) {
-        console.log(`⏳ Booking intent but already sent contact`);
+      // ==================== PATH E CONVERSATION ====================
+      if (selection === "E") {
+        console.log(`💬 Path E conversation`);
+        const useHinglish = isHinglish(text);
+
+        // Check for Instagram/Location requests
+        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
+          console.log(`📸 Instagram request`);
+          await new Promise(r => setTimeout(r, 500));
+          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
+          await sendText(phone, instaMsg);
+          // Continue with service question
+          if (state.stage === "waiting_service_e") {
+            await new Promise(r => setTimeout(r, 1000));
+            const msg = useHinglish
+              ? "Aap kaunsi beauty service lena chahti hain?"
+              : "Which beauty service are you interested in?";
+            await sendText(phone, msg);
+          }
+          return res.sendStatus(200);
+        }
+
+        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
+          console.log(`📍 Location request`);
+          await new Promise(r => setTimeout(r, 500));
+          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
+          await sendText(phone, locMsg);
+          // Continue with service question
+          if (state.stage === "waiting_service_e") {
+            await new Promise(r => setTimeout(r, 1000));
+            const msg = useHinglish
+              ? "Aap kaunsi beauty service lena chahti hain?"
+              : "Which beauty service are you interested in?";
+            await sendText(phone, msg);
+          }
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR SERVICE SPECIFICATION
+        if (state.stage === "waiting_service_e") {
+          console.log(`💅 Received service: ${text}`);
+          await new Promise(r => setTimeout(r, 500));
+          
+          const serviceMsg = useHinglish
+            ? `${text} service details:\n\nKab visit kar sakte ho?`
+            : `${text} service details:\n\nWhen would you like to book?`;
+          
+          await sendText(phone, serviceMsg);
+          customerState.set(phone, { stage: "waiting_slot_e" });
+          await updateActiveLead(phone, { lastMsg: text });
+          return res.sendStatus(200);
+        }
+
+        // WAITING FOR SLOT/TIMING
+        if (state.stage === "waiting_slot_e") {
+          console.log(`📅 Received slot`);
+          // NO MESSAGE - Just update sheet and end
+          customerState.set(phone, { stage: "done" });
+          await updateActiveLead(phone, { status: "Ready for Garima", lastMsg: text });
+          
+          console.log(`✅ Path E complete - conversation ended`);
+          return res.sendStatus(200);
+        }
+
+        // OTHERWISE STAY SILENT
+        console.log(`🤐 Path E - Unexpected message - staying silent`);
         return res.sendStatus(200);
       }
-
-      console.log(`⏳ Unknown query - bot staying silent`);
-      return res.sendStatus(200);
     }
 
-    res.sendStatus(200);
+    // Ignore messages without history or trigger
+    console.log(`⏭️ IGNORED: No history, no trigger, no selection`);
+    return res.sendStatus(200);
+
   } catch (err) {
     console.error("❌ Webhook error:", err.message);
-    res.sendStatus(200);
+    return res.status(500).json({ error: err.message });
   }
+});
+
+// ==================== TEST ENDPOINT ====================
+
+app.get("/test-webhook", (req, res) => {
+  console.log("🧪 TEST WEBHOOK RECEIVED!");
+  res.json({ status: "Bot is working", time: new Date() });
 });
 
 app.get("/", (req, res) => {
-  res.json({
-    agent: "Beauty Box Bot v4.7",
-    status: "✅ RUNNING",
-    features: ["Exact trigger", "Menu selection", "PDF sending", "Location", "Instagram", "Booking contact"],
-  });
+  res.json({ status: "Beauty Box Bot v6.0 - Active" });
 });
 
-app.get("/admin", (req, res) => {
-  res.setHeader("Content-Type", "text/html");
-  res.send(`<!DOCTYPE html><html><head><title>Beauty Box Admin</title><style>body{font-family:sans-serif;background:#f5f5f5;display:flex;justify-content:center;padding:20px}.card{background:#fff;border-radius:12px;padding:30px;width:100%;max-width:400px;box-shadow:0 2px 10px rgba(0,0,0,0.1)}h2{margin:0 0 20px 0}label{display:block;font-size:13px;color:#666;margin-top:12px;margin-bottom:5px}input,textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:8px;padding:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:10px}button:hover{background:#0d6b65}.msg{margin-top:15px;padding:12px;border-radius:8px;text-align:center;display:none;font-size:14px}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#ffebee;color:#c62828}</style></head><body><div class="card"><h2>Beauty Box Admin</h2><label>Phone (with +91)</label><input id="ph" placeholder="919999999999"><label>Name</label><input id="nm" placeholder="Customer"><label>Message</label><textarea id="msg" rows="3" placeholder="Message"></textarea><label>Admin Key</label><input id="ky" type="password" placeholder="beautybox2024"><button onclick="send()">Send</button><div class="msg" id="res"></div></div><script>async function send(){const ph=document.getElementById('ph').value.trim();const ky=document.getElementById('ky').value.trim();if(!ph||!ky){show('Enter phone & key','err');return}try{const r=await fetch('/admin/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:document.getElementById('nm').value.trim(),key:ky,message:document.getElementById('msg').value.trim()})});const d=await r.json();show(d.success?'✅ Sent':'Error',d.success?'ok':'err')}catch(e){show('Error','err')}}function show(t,c){const el=document.getElementById('res');el.textContent=t;el.className='msg '+c;el.style.display='block'}</script></body></html>`);
-});
-
-app.post("/admin/send", async (req, res) => {
-  const { phone, name, key, message } = req.body;
-  if (key !== ADMIN_KEY) return res.json({ success: false });
-  try {
-    if (message) await sendText(phone, message);
-    res.json({ success: true });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
-});
-
-app.listen(PORT, async () => {
-  console.log(`\n${"=".repeat(50)}`);
-  console.log(`🚀 BEAUTY BOX BOT v4.7`);
-  console.log(`${"=".repeat(50)}`);
-  console.log(`Port: ${PORT}`);
-  console.log(`Status: ✅ ACTIVE`);
-  console.log(`PDF: ${PREBRIDAL_PDF_URL}`);
-  console.log(`\n✨ Ready for WhatsApp messages!\n`);
-
-  await initSheets();
-});
+module.exports = app;
