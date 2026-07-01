@@ -427,6 +427,18 @@ function parseWebhook(body) {
   } catch (e) { return null; }
 }
 
+// TEST ENDPOINT - to verify WAPI can reach us
+app.post("/test-webhook", async (req, res) => {
+  try {
+    console.log("\n🧪 TEST WEBHOOK RECEIVED!");
+    console.log("Body:", JSON.stringify(req.body).substring(0, 200));
+    res.json({ success: true, message: "Test webhook received successfully", timestamp: new Date() });
+  } catch (err) {
+    console.error("Test webhook error:", err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 app.post("/webhook", async (req, res) => {
   try {
     const parsed = parseWebhook(req.body);
