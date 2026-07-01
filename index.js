@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 8080;
 const WAPI_VENDOR_UID = process.env.WAPI_VENDOR_UID || "";
 const WAPI_TOKEN = process.env.WAPI_TOKEN || "";
 const SHEET_ID = process.env.SHEET_ID || "";
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const PREBRIDAL_PDF_URL = process.env.PREBRIDAL_PDF_URL || "https://bit.ly/4fbKIox";
 const BRIDAL_MAKEUP_PDF_URL = process.env.BRIDAL_MAKEUP_PDF_URL || "";
 const ADMIN_PHONE = "919560277217";
@@ -25,7 +24,8 @@ let BOT_ACTIVE = false;
 // MEMORY
 const conversations = new Map();
 const customerPath = new Map();
-const customerState = new Map(); // Track question stage for each customer
+const customerState = new Map();
+const customerData = new Map(); // Track collected data per customer
 const pendingMenuSelect = new Set();
 
 const MENU_TEXT_EN = `Welcome to Beauty Box Makeup Studio 💄
@@ -68,7 +68,7 @@ async function initSheets() {
 }
 
 app.listen(PORT, async () => {
-  console.log(`\n🎉 BEAUTY BOX BOT v6.0 - STARTING`);
+  console.log(`\n🎉 BEAUTY BOX BOT v6.2 - STARTING`);
   console.log(`Port: ${PORT}`);
   console.log(`🔗 WAPI: Connected`);
   await initSheets();
@@ -224,6 +224,7 @@ async function updateActiveLead(phone, updates) {
     const updated = [...current];
 
     if (updates.weddingDate) updated[2] = updates.weddingDate;
+    if (updates.serviceDate) updated[2] = updates.serviceDate;
     if (updates.location) updated[3] = updates.location;
     if (updates.servicePath) updated[9] = updates.servicePath;
     if (updates.status) updated[5] = updates.status;
@@ -236,6 +237,7 @@ async function updateActiveLead(phone, updates) {
       valueInputOption: "RAW",
       resource: { values: [updated] },
     });
+    console.log(`📊 Sheet updated for ${phone}`);
   } catch (err) {
     console.error("❌ updateActiveLead error:", err.message);
   }
@@ -267,7 +269,6 @@ function parseWebhook(body) {
   try {
     console.log("🔍 Parsing payload:", JSON.stringify(body).substring(0, 150));
     
-    // WAPI format
     if (body?.contact?.phone_number || body?.data?.contact?.phone_number) {
       const phone = body?.contact?.phone_number || body?.data?.contact?.phone_number || "";
       const text = body?.message?.body || body?.data?.message?.body || "";
@@ -325,115 +326,75 @@ app.post("/webhook", async (req, res) => {
       console.log(`📋 PATH ${selection}: ${phone}`);
       pendingMenuSelect.delete(phone);
       customerPath.set(phone, selection);
-      customerState.set(phone, {}); // Initialize state
+      const useHinglish = isHinglish(text);
+      customerState.set(phone, { stage: "intro", useHinglish });
+      customerData.set(phone, {});
 
       await new Promise(r => setTimeout(r, 500));
 
       // PATH A: PRE-BRIDAL
       if (selection === "A") {
-        console.log(`📦 PATH A: Pre-Bridal`);
-        const useHinglish = isHinglish(text);
-        
-        // Message 1: Intro
         const msg1 = "Sharing complete pre-bridal offer details in PDF below 👇";
         await sendText(phone, msg1);
-
-        // Message 2: PDF
         await new Promise(r => setTimeout(r, 1500));
         await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
-
-        // Message 3: First question (wedding date)
         await new Promise(r => setTimeout(r, 2000));
-        const msg3 = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
-        await sendText(phone, msg3);
-
-        customerState.set(phone, { stage: "waiting_date" });
+        const msg2 = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
+        await sendText(phone, msg2);
+        customerState.set(phone, { stage: "waiting_date_a", useHinglish });
         await updateActiveLead(phone, { status: "Path A - Waiting for Wedding Date", servicePath: "A" });
-
         return res.sendStatus(200);
       }
 
       // PATH B: PRE-BRIDAL + BRIDAL
       else if (selection === "B") {
-        console.log(`📦 PATH B: Pre-Bridal + Bridal`);
-        const useHinglish = isHinglish(text);
-        
-        // Message 1: Intro
         const msg1 = "Sharing complete pre-bridal & bridal makeup offer details in PDF below 👇";
         await sendText(phone, msg1);
-
-        // Message 2: Pre-Bridal PDF
         await new Promise(r => setTimeout(r, 1500));
         await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package");
-
-        // Message 3: Bridal Makeup PDF (if available)
         if (BRIDAL_MAKEUP_PDF_URL) {
           await new Promise(r => setTimeout(r, 1500));
           await sendPDF(phone, BRIDAL_MAKEUP_PDF_URL, "Bridal Makeup Details");
-        } else {
-          await new Promise(r => setTimeout(r, 1500));
-          const msg3alt = "Bridal makeup can be discussed during your visit to studio 💄";
-          await sendText(phone, msg3alt);
         }
-
-        // Message 4: Visit timing question
         await new Promise(r => setTimeout(r, 1500));
-        const msg4 = useHinglish 
-          ? "Aap studio mein kab visit kar sakte ho?"
-          : "When can you visit our studio?";
-        await sendText(phone, msg4);
-
-        customerState.set(phone, { stage: "waiting_visit_time" });
-        await updateActiveLead(phone, { status: "Path B - Waiting for Visit Time", servicePath: "B" });
-
+        const msg2 = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
+        await sendText(phone, msg2);
+        customerState.set(phone, { stage: "waiting_date_b", useHinglish });
+        await updateActiveLead(phone, { status: "Path B - Waiting for Wedding Date", servicePath: "B" });
         return res.sendStatus(200);
       }
 
       // PATH C: HYDRA FACIAL
       else if (selection === "C") {
-        console.log(`📦 PATH C: Hydra Facial`);
-        const useHinglish = isHinglish(text);
-        
         const msg = useHinglish
-          ? `💧 *Hydra Facial Special Offer:*\n\n• Single Sitting: Rs.1,199\n• 3-Sitting Combo: Rs.2,999 (Recommended)\n\nKab visit kar sakte ho?`
-          : `💧 *Hydra Facial Special Offer:*\n\n• Single Sitting: Rs.1,199\n• 3-Sitting Combo: Rs.2,999 (Recommended)\n\nWhen can you visit?`;
-        
+          ? `💧 *Hydra Facial Special Offer:*\n\n• Single Sitting: Rs.1,199\n• 3-Sitting Combo: Rs.2,999 (Recommended)\n\nKab service lena chahti ho?`
+          : `💧 *Hydra Facial Special Offer:*\n\n• Single Sitting: Rs.1,199\n• 3-Sitting Combo: Rs.2,999 (Recommended)\n\nWhen would you like to take the service?`;
         await sendText(phone, msg);
-
-        customerState.set(phone, { stage: "waiting_visit_c" });
-        await updateActiveLead(phone, { status: "Path C - Waiting for Visit Time", servicePath: "C" });
-
+        customerState.set(phone, { stage: "waiting_date_c", useHinglish });
+        await updateActiveLead(phone, { status: "Path C - Waiting for Service Date", servicePath: "C" });
         return res.sendStatus(200);
       }
 
       // PATH D: NAIL SERVICES
       else if (selection === "D") {
-        console.log(`📦 PATH D: Nail Services`);
-        
         const msg = `💅 *Nail Services*\n\nStarting from Rs.399 onwards\n\nDesign options available:\n• French\n• Ombre\n• Glitter\n• Bridal Designs\n• Custom Designs`;
-        
         await sendText(phone, msg);
-
-        customerState.set(phone, { stage: "done_d" }); // NO MORE QUESTIONS
-        await updateActiveLead(phone, { status: "Path D - Sent Details", servicePath: "D" });
-
+        await new Promise(r => setTimeout(r, 1500));
+        const msg2 = useHinglish ? "Kab visit kar sakte ho?" : "When would you like to visit?";
+        await sendText(phone, msg2);
+        customerState.set(phone, { stage: "waiting_date_d", useHinglish });
+        await updateActiveLead(phone, { status: "Path D - Waiting for Service Date", servicePath: "D" });
         return res.sendStatus(200);
       }
 
       // PATH E: OTHER BEAUTY SERVICES
       else if (selection === "E") {
-        console.log(`📦 PATH E: Other Services`);
-        const useHinglish = isHinglish(text);
-        
         const msg = useHinglish
           ? "Aap kaunsi beauty service lena chahti hain?\n\n(Facials, Hair Care, Waxing, Bleach, Threading, etc.)"
           : "Which beauty service are you interested in?\n\n(Facials, Hair Care, Waxing, Bleach, Threading, etc.)";
-        
         await sendText(phone, msg);
-
-        customerState.set(phone, { stage: "waiting_service_e" });
+        customerState.set(phone, { stage: "waiting_service_e", useHinglish });
         await updateActiveLead(phone, { status: "Path E - Waiting for Service", servicePath: "E" });
-
         return res.sendStatus(200);
       }
     }
@@ -445,7 +406,6 @@ app.post("/webhook", async (req, res) => {
       const useHinglish = isHinglish(text);
       
       await addActiveLead(phone, firstName, "WhatsApp", text);
-
       conversations.set(phone, []);
       await new Promise(r => setTimeout(r, 1000));
       
@@ -471,299 +431,166 @@ app.post("/webhook", async (req, res) => {
       const lower = text.toLowerCase().trim();
       const selection = customerPath.get(phone);
       const state = customerState.get(phone) || {};
+      const data = customerData.get(phone) || {};
 
-      // ==================== PATH A CONVERSATION ====================
-      if (selection === "A") {
-        console.log(`💬 Path A conversation`);
-        const useHinglish = isHinglish(text);
-
-        // Check for Instagram/Location requests FIRST
-        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
-          console.log(`📸 Instagram request`);
-          await new Promise(r => setTimeout(r, 500));
-          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
-          await sendText(phone, instaMsg);
-          getHistory(phone).push({ role: "user", content: text });
-          getHistory(phone).push({ role: "assistant", content: instaMsg });
-          // CONTINUE TO NEXT QUESTION
-          if (state.stage === "waiting_date") {
-            await new Promise(r => setTimeout(r, 1000));
-            const nextQ = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
-            await sendText(phone, nextQ);
-          }
-          return res.sendStatus(200);
+      // Check for Instagram/Location requests FIRST
+      if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
+        console.log(`📸 Instagram request`);
+        await new Promise(r => setTimeout(r, 500));
+        const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
+        await sendText(phone, instaMsg);
+        // Then ask the next question
+        await new Promise(r => setTimeout(r, 1000));
+        const useHinglish = state.useHinglish;
+        
+        if (["A", "B", "C", "D"].includes(selection) && !data.date) {
+          const dateQ = (selection === "A" || selection === "B") 
+            ? (useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?")
+            : (useHinglish ? "Kab visit kar sakte ho?" : "When would you like to visit?");
+          await sendText(phone, dateQ);
         }
-
-        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
-          console.log(`📍 Location request`);
-          await new Promise(r => setTimeout(r, 500));
-          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
-          await sendText(phone, locMsg);
-          getHistory(phone).push({ role: "user", content: text });
-          getHistory(phone).push({ role: "assistant", content: locMsg });
-          // CONTINUE TO NEXT QUESTION
-          if (state.stage === "waiting_date") {
-            await new Promise(r => setTimeout(r, 1000));
-            const nextQ = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
-            await sendText(phone, nextQ);
-          }
-          return res.sendStatus(200);
-        }
-
-        // WAITING FOR WEDDING DATE
-        if (state.stage === "waiting_date") {
-          console.log(`📅 Received wedding date`);
-          await new Promise(r => setTimeout(r, 500));
-          const nextQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
-          await sendText(phone, nextQ);
-          customerState.set(phone, { stage: "waiting_location" });
-          await updateActiveLead(phone, { weddingDate: text, lastMsg: text });
-          return res.sendStatus(200);
-        }
-
-        // WAITING FOR LOCATION
-        if (state.stage === "waiting_location") {
-          console.log(`📌 Received location`);
-          await new Promise(r => setTimeout(r, 500));
-          
-          // NO MESSAGE - Just update sheet and end
-          customerState.set(phone, { stage: "done" });
-          await updateActiveLead(phone, { location: text, status: "Ready for Garima", lastMsg: text });
-          
-          console.log(`✅ Path A complete - conversation ended`);
-          return res.sendStatus(200);
-        }
-
-        // OTHERWISE STAY SILENT
-        console.log(`🤐 Path A - Unexpected message - staying silent`);
+        
         return res.sendStatus(200);
       }
 
-      // ==================== PATH B CONVERSATION ====================
-      if (selection === "B") {
-        console.log(`💬 Path B conversation`);
-        const useHinglish = isHinglish(text);
-
-        // Check for Instagram/Location requests FIRST
-        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
-          console.log(`📸 Instagram request`);
-          await new Promise(r => setTimeout(r, 500));
-          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
-          await sendText(phone, instaMsg);
-          // CONTINUE TO NEXT QUESTION
-          if (state.stage === "waiting_visit_time") {
-            await new Promise(r => setTimeout(r, 1000));
-            const nextQ = useHinglish 
-              ? "Aap studio mein kab visit kar sakte ho?"
-              : "When can you visit our studio?";
-            await sendText(phone, nextQ);
-          }
-          return res.sendStatus(200);
+      if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
+        console.log(`📍 Location request`);
+        await new Promise(r => setTimeout(r, 500));
+        const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
+        await sendText(phone, locMsg);
+        // Then ask the next question
+        await new Promise(r => setTimeout(r, 1000));
+        const useHinglish = state.useHinglish;
+        
+        if (["A", "B", "C", "D"].includes(selection) && !data.location) {
+          const locQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
+          await sendText(phone, locQ);
         }
-
-        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
-          console.log(`📍 Location request`);
-          await new Promise(r => setTimeout(r, 500));
-          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
-          await sendText(phone, locMsg);
-          // CONTINUE TO NEXT QUESTION
-          if (state.stage === "waiting_visit_time") {
-            await new Promise(r => setTimeout(r, 1000));
-            const nextQ = useHinglish 
-              ? "Aap studio mein kab visit kar sakte ho?"
-              : "When can you visit our studio?";
-            await sendText(phone, nextQ);
-          }
-          return res.sendStatus(200);
-        }
-
-        // WAITING FOR VISIT TIME
-        if (state.stage === "waiting_visit_time") {
-          console.log(`📅 Received visit time`);
-          await new Promise(r => setTimeout(r, 500));
-          const nextQ = useHinglish ? "Aapki shaadi kab hai?" : "When is your marriage?";
-          await sendText(phone, nextQ);
-          customerState.set(phone, { stage: "waiting_date_b" });
-          await updateActiveLead(phone, { lastMsg: text });
-          return res.sendStatus(200);
-        }
-
-        // WAITING FOR WEDDING DATE
-        if (state.stage === "waiting_date_b") {
-          console.log(`📅 Received wedding date`);
-          await new Promise(r => setTimeout(r, 500));
-          const nextQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
-          await sendText(phone, nextQ);
-          customerState.set(phone, { stage: "waiting_location_b" });
-          await updateActiveLead(phone, { weddingDate: text, lastMsg: text });
-          return res.sendStatus(200);
-        }
-
-        // WAITING FOR LOCATION
-        if (state.stage === "waiting_location_b") {
-          console.log(`📌 Received location`);
-          await new Promise(r => setTimeout(r, 500));
-          
-          // NO MESSAGE - Just update sheet and end
-          customerState.set(phone, { stage: "done" });
-          await updateActiveLead(phone, { location: text, status: "Ready for Garima", lastMsg: text });
-          
-          console.log(`✅ Path B complete - conversation ended`);
-          return res.sendStatus(200);
-        }
-
-        // OTHERWISE STAY SILENT
-        console.log(`🤐 Path B - Unexpected message - staying silent`);
+        
         return res.sendStatus(200);
       }
 
-      // ==================== PATH C CONVERSATION ====================
+      // PATH A & B: COLLECT DATE AND LOCATION
+      if (selection === "A" || selection === "B") {
+        if (state.stage === "waiting_date_a" || state.stage === "waiting_date_b") {
+          console.log(`📅 Received date for path ${selection}`);
+          data.date = text;
+          customerData.set(phone, data);
+          await new Promise(r => setTimeout(r, 500));
+          const useHinglish = state.useHinglish;
+          const locQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
+          await sendText(phone, locQ);
+          const newStage = selection === "A" ? "waiting_location_a" : "waiting_location_b";
+          customerState.set(phone, { stage: newStage, useHinglish });
+          await updateActiveLead(phone, { weddingDate: text, lastMsg: text, status: `Path ${selection} - Waiting for Location` });
+          return res.sendStatus(200);
+        }
+
+        if (state.stage === "waiting_location_a" || state.stage === "waiting_location_b") {
+          console.log(`📌 Received location for path ${selection}`);
+          data.location = text;
+          customerData.set(phone, data);
+          customerState.set(phone, { stage: "done" });
+          await updateActiveLead(phone, { location: text, lastMsg: text, status: `Path ${selection} - Complete` });
+          console.log(`✅ Path ${selection} complete - conversation ended`);
+          return res.sendStatus(200);
+        }
+      }
+
+      // PATH C: COLLECT DATE AND LOCATION
       if (selection === "C") {
-        console.log(`💬 Path C conversation`);
-        const useHinglish = isHinglish(text);
-
-        // Check for Instagram/Location requests
-        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
-          console.log(`📸 Instagram request`);
+        if (state.stage === "waiting_date_c") {
+          console.log(`📅 Received date for path C`);
+          data.date = text;
+          customerData.set(phone, data);
           await new Promise(r => setTimeout(r, 500));
-          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
-          await sendText(phone, instaMsg);
-          // Re-ask visit question
-          await new Promise(r => setTimeout(r, 1000));
-          const msg = useHinglish ? "Kab visit kar sakte ho?" : "When can you visit?";
-          await sendText(phone, msg);
+          const useHinglish = state.useHinglish;
+          const locQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
+          await sendText(phone, locQ);
+          customerState.set(phone, { stage: "waiting_location_c", useHinglish });
+          await updateActiveLead(phone, { serviceDate: text, lastMsg: text, status: "Path C - Waiting for Location" });
           return res.sendStatus(200);
         }
 
-        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
-          console.log(`📍 Location request`);
-          await new Promise(r => setTimeout(r, 500));
-          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
-          await sendText(phone, locMsg);
-          // Re-ask visit question
-          await new Promise(r => setTimeout(r, 1000));
-          const msg = useHinglish ? "Kab visit kar sakte ho?" : "When can you visit?";
-          await sendText(phone, msg);
-          return res.sendStatus(200);
-        }
-
-        // WAITING FOR VISIT TIME - once provided, end conversation
-        if (state.stage === "waiting_visit_c") {
-          console.log(`📅 Received visit time`);
-          // NO MESSAGE - Just update sheet and end
+        if (state.stage === "waiting_location_c") {
+          console.log(`📌 Received location for path C`);
+          data.location = text;
+          customerData.set(phone, data);
           customerState.set(phone, { stage: "done" });
-          await updateActiveLead(phone, { status: "Ready for Garima", lastMsg: text });
-          
+          await updateActiveLead(phone, { location: text, lastMsg: text, status: "Path C - Complete" });
           console.log(`✅ Path C complete - conversation ended`);
           return res.sendStatus(200);
         }
-
-        // OTHERWISE STAY SILENT
-        console.log(`🤐 Path C - Unexpected message - staying silent`);
-        return res.sendStatus(200);
       }
 
-      // ==================== PATH D CONVERSATION ====================
+      // PATH D: COLLECT DATE AND LOCATION
       if (selection === "D") {
-        console.log(`💬 Path D conversation`);
-
-        // Check for Instagram/Location requests ONLY
-        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
-          console.log(`📸 Instagram request`);
+        if (state.stage === "waiting_date_d") {
+          console.log(`📅 Received date for path D`);
+          data.date = text;
+          customerData.set(phone, data);
           await new Promise(r => setTimeout(r, 500));
-          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
-          await sendText(phone, instaMsg);
+          const useHinglish = state.useHinglish;
+          const locQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
+          await sendText(phone, locQ);
+          customerState.set(phone, { stage: "waiting_location_d", useHinglish });
+          await updateActiveLead(phone, { serviceDate: text, lastMsg: text, status: "Path D - Waiting for Location" });
           return res.sendStatus(200);
         }
 
-        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
-          console.log(`📍 Location request`);
-          await new Promise(r => setTimeout(r, 500));
-          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
-          await sendText(phone, locMsg);
-          return res.sendStatus(200);
-        }
-
-        // Check for booking request
-        if (lower.includes("book") || lower.includes("slot") || lower.includes("available") || lower.includes("kab")) {
-          console.log(`📞 Booking request - no auto-reply, customer will see WhatsApp from Garima number`);
+        if (state.stage === "waiting_location_d") {
+          console.log(`📌 Received location for path D`);
+          data.location = text;
+          customerData.set(phone, data);
           customerState.set(phone, { stage: "done" });
+          await updateActiveLead(phone, { location: text, lastMsg: text, status: "Path D - Complete" });
+          console.log(`✅ Path D complete - conversation ended`);
           return res.sendStatus(200);
         }
-
-        // OTHERWISE STAY SILENT
-        console.log(`🤐 Path D - No Instagram/Location/Booking - staying silent`);
-        return res.sendStatus(200);
       }
 
-      // ==================== PATH E CONVERSATION ====================
+      // PATH E: COLLECT SERVICE, DATE, AND LOCATION
       if (selection === "E") {
-        console.log(`💬 Path E conversation`);
-        const useHinglish = isHinglish(text);
-
-        // Check for Instagram/Location requests
-        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
-          console.log(`📸 Instagram request`);
-          await new Promise(r => setTimeout(r, 500));
-          const instaMsg = `Follow us! 💄\n\n${INSTAGRAM_ID}\n${INSTAGRAM_URL}`;
-          await sendText(phone, instaMsg);
-          // Continue with service question
-          if (state.stage === "waiting_service_e") {
-            await new Promise(r => setTimeout(r, 1000));
-            const msg = useHinglish
-              ? "Aap kaunsi beauty service lena chahti hain?"
-              : "Which beauty service are you interested in?";
-            await sendText(phone, msg);
-          }
-          return res.sendStatus(200);
-        }
-
-        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio") || lower.includes("where")) {
-          console.log(`📍 Location request`);
-          await new Promise(r => setTimeout(r, 500));
-          const locMsg = `*Studio Address:*\n${STUDIO_ADDRESS}\n\n🚇 Near: Janakpuri West Metro Station`;
-          await sendText(phone, locMsg);
-          // Continue with service question
-          if (state.stage === "waiting_service_e") {
-            await new Promise(r => setTimeout(r, 1000));
-            const msg = useHinglish
-              ? "Aap kaunsi beauty service lena chahti hain?"
-              : "Which beauty service are you interested in?";
-            await sendText(phone, msg);
-          }
-          return res.sendStatus(200);
-        }
-
-        // WAITING FOR SERVICE SPECIFICATION
         if (state.stage === "waiting_service_e") {
           console.log(`💅 Received service: ${text}`);
+          data.service = text;
+          customerData.set(phone, data);
           await new Promise(r => setTimeout(r, 500));
-          
-          const serviceMsg = useHinglish
-            ? `${text} service details:\n\nKab visit kar sakte ho?`
-            : `${text} service details:\n\nWhen would you like to book?`;
-          
-          await sendText(phone, serviceMsg);
-          customerState.set(phone, { stage: "waiting_slot_e" });
-          await updateActiveLead(phone, { lastMsg: text });
+          const useHinglish = state.useHinglish;
+          const dateQ = useHinglish ? "Kab service lena chahti ho?" : "When would you like to take the service?";
+          await sendText(phone, dateQ);
+          customerState.set(phone, { stage: "waiting_date_e", useHinglish });
+          await updateActiveLead(phone, { lastMsg: text, status: `Path E - Service: ${text} - Waiting for Date` });
           return res.sendStatus(200);
         }
 
-        // WAITING FOR SLOT/TIMING
-        if (state.stage === "waiting_slot_e") {
-          console.log(`📅 Received slot`);
-          // NO MESSAGE - Just update sheet and end
+        if (state.stage === "waiting_date_e") {
+          console.log(`📅 Received date for path E`);
+          data.date = text;
+          customerData.set(phone, data);
+          await new Promise(r => setTimeout(r, 500));
+          const useHinglish = state.useHinglish;
+          const locQ = useHinglish ? "Aap kaunse area se ho?" : "Which area are you from?";
+          await sendText(phone, locQ);
+          customerState.set(phone, { stage: "waiting_location_e", useHinglish });
+          await updateActiveLead(phone, { serviceDate: text, lastMsg: text, status: "Path E - Waiting for Location" });
+          return res.sendStatus(200);
+        }
+
+        if (state.stage === "waiting_location_e") {
+          console.log(`📌 Received location for path E`);
+          data.location = text;
+          customerData.set(phone, data);
           customerState.set(phone, { stage: "done" });
-          await updateActiveLead(phone, { status: "Ready for Garima", lastMsg: text });
-          
+          await updateActiveLead(phone, { location: text, lastMsg: text, status: "Path E - Complete" });
           console.log(`✅ Path E complete - conversation ended`);
           return res.sendStatus(200);
         }
-
-        // OTHERWISE STAY SILENT
-        console.log(`🤐 Path E - Unexpected message - staying silent`);
-        return res.sendStatus(200);
       }
+
+      // OTHERWISE STAY SILENT
+      console.log(`🤐 Unexpected message - staying silent`);
+      return res.sendStatus(200);
     }
 
     // Ignore messages without history or trigger
@@ -784,7 +611,7 @@ app.get("/test-webhook", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.json({ status: "Beauty Box Bot v6.0 - Active" });
+  res.json({ status: "Beauty Box Bot v6.2 - Active" });
 });
 
 module.exports = app;
