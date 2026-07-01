@@ -24,7 +24,7 @@ let sheetsClient = null;
 async function initSheets() {
   try {
     if (!process.env.GOOGLE_CREDENTIALS || !SHEET_ID) {
-      console.log("Sheets disabled -- credentials or SHEET_ID missing");
+      console.log("⚠️  Sheets disabled -- credentials or SHEET_ID missing");
       return;
     }
     const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
@@ -33,10 +33,10 @@ async function initSheets() {
       scopes: ["https://www.googleapis.com/auth/spreadsheets"],
     });
     sheetsClient = google.sheets({ version: "v4", auth });
-    console.log("Google Sheets connected");
+    console.log("✅ Google Sheets connected");
     await ensureHeaders();
   } catch (err) {
-    console.error("Sheets init failed:", err.message);
+    console.error("❌ Sheets init failed:", err.message);
   }
 }
 
@@ -49,9 +49,9 @@ async function ensureHeaders() {
       valueInputOption: "RAW",
       resource: { values: [activeHeaders] },
     });
-    console.log("Sheet headers verified");
+    console.log("✅ Sheet headers verified");
   } catch (err) {
-    console.log("Header setup skipped:", err.message);
+    console.log("⚠️  Header setup skipped:", err.message);
   }
 }
 
@@ -74,13 +74,16 @@ async function findRow(sheetName, phone) {
     }
     return -1;
   } catch (err) {
-    console.error("findRow error:", err.message);
+    console.error("❌ findRow error:", err.message);
     return -1;
   }
 }
 
 async function addActiveLead(phone, name, wedding, city, source, status, lastMsg) {
-  if (!sheetsClient) return;
+  if (!sheetsClient) {
+    console.log("⚠️  Sheets not connected - skipping add lead");
+    return;
+  }
   try {
     const existing = await findRow("Active Leads", phone);
     if (existing > 0) {
@@ -102,9 +105,9 @@ async function addActiveLead(phone, name, wedding, city, source, status, lastMsg
         ]],
       },
     });
-    console.log(`Added to Active Leads: ${phone}`);
+    console.log(`✅ Added to Sheets: ${phone} | Source: ${source}`);
   } catch (err) {
-    console.error("addActiveLead error:", err.message);
+    console.error("❌ addActiveLead error:", err.message);
   }
 }
 
@@ -138,7 +141,7 @@ async function updateActiveLead(phone, updates) {
       resource: { values: [updated] },
     });
   } catch (err) {
-    console.error("updateActiveLead error:", err.message);
+    console.error("❌ updateActiveLead error:", err.message);
   }
 }
 
@@ -150,7 +153,7 @@ function isExactTrigger(text) {
   return lower === EXACT_TRIGGER.toLowerCase();
 }
 
-// Check if bot already sent contact message to this customer
+// Check if bot already sent contact message
 async function hasContactMessageSent(phone) {
   if (!sheetsClient) return false;
   try {
@@ -161,7 +164,6 @@ async function hasContactMessageSent(phone) {
       range: `Active Leads!A${row}:K${row}`,
     });
     const status = res.data.values?.[0]?.[5] || "";
-    // If status is "Booking Inquiry" or contains "Contact Sent", don't send again
     return status.toLowerCase().includes("booking inquiry") || status.toLowerCase().includes("contact sent");
   } catch (err) {
     return false;
@@ -181,19 +183,23 @@ function detectBookingIntent(text) {
   ];
   
   for (const keyword of bookingKeywords) {
-    if (lower.includes(keyword)) {
-      return true;
-    }
+    if (lower.includes(keyword)) return true;
   }
   return false;
 }
 
 // Check Bot Intervention column K
 async function checkBotIntervention(phone) {
-  if (!sheetsClient) return true;
+  if (!sheetsClient) {
+    console.log(`ℹ️  Sheets not connected - bot defaults to ON for ${phone}`);
+    return true;
+  }
   try {
     const row = await findRow("Active Leads", phone);
-    if (row < 1) return true;
+    if (row < 1) {
+      console.log(`ℹ️  No row found for ${phone} - bot defaults to ON`);
+      return true;
+    }
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
       range: `Active Leads!K${row}`,
@@ -202,11 +208,10 @@ async function checkBotIntervention(phone) {
     const cleanVal = val.toString().trim().toLowerCase();
     const isOn = cleanVal === "yes" || cleanVal === "y" || cleanVal === "";
     
-    if (!isOn) {
-      console.log(`Bot Intervention = "${val}" for ${phone} -- BOT SKIPPING REPLY`);
-    }
+    console.log(`🔍 Bot Intervention for ${phone}: "${val}" → ${isOn ? "✅ ON" : "❌ OFF"}`);
     return isOn;
   } catch (err) {
+    console.error("❌ checkBotIntervention error:", err.message);
     return true;
   }
 }
@@ -216,7 +221,7 @@ const lastSentMessage    = new Map();
 const lastMessageTime    = new Map();
 const pendingMenuSelect  = new Set();
 const customerPath       = new Map();
-const contactMessageSent = new Map(); // Track if contact message already sent
+const contactMessageSent = new Map();
 
 function getHistory(phone) {
   if (!conversations.has(phone)) conversations.set(phone, []);
@@ -229,7 +234,7 @@ function addToHistory(phone, role, content) {
   if (h.length > 10) h.splice(0, h.length - 10);
 }
 
-const MENU_TEXT = `Welcome to Beauty Box Makeup Studio
+const MENU_TEXT = `Welcome to Beauty Box Makeup Studio 💄
 
 Aap kaunsi service ke baare mein jaanna chahti hain?
 
@@ -250,9 +255,9 @@ async function sendMenuButtons(toPhone) {
       message_body: MENU_TEXT,
     };
     await axios.post(url, payload);
-    console.log(`Menu sent to ${toPhone}`);
+    console.log(`✅ Menu sent to ${toPhone}`);
   } catch (err) {
-    console.error(`Menu failed:`, err?.response?.data?.message || err.message);
+    console.error(`❌ Menu failed:`, err?.response?.data?.message || err.message);
   }
 }
 
@@ -292,7 +297,7 @@ function getServiceResponse(selection, customerName) {
 - Face Bleach & O3+ Facial
 - Threading & Upper Lips
 
-Premium Products | Hygienic & Safe Care | Flexible Appointments | Expert Professionals`;
+Premium Products | Hygienic & Safe Care | Flexible Appointments`;
     
     case "B":
       return `${name}*PRE-BRIDAL + BRIDAL MAKEUP COMBO - Rs.16,500* (Save Rs.1,999)
@@ -340,40 +345,19 @@ Professional team handles all services.`;
     case "E":
       return `${name}*BEAUTY BOX COMPLETE PRICE LIST*
 
-*FACIALS:*
-- Classic Facial (Fruit): Rs.549 | Dr. Rashel DE Tan: Rs.499
-- Lotus Natural Glow: Rs.799 | Biotique Anti Ageing: Rs.849
-- Whiting Facial: Rs.999 | Lotus Hydra Facial: Rs.999
-- Oxylife Pro: Rs.999 | Red Wine Facial: Rs.1,399
-- Korean Facial: Rs.1,999 | Premium Facial: Rs.1,599
-- O3+ Vitamin Power Brightening: Rs.1,999 | O3+ Vitamin Bridal Glow: Rs.2,199
+*FACIALS:* Classic (Rs.549) | DE Tan (Rs.499) | Lotus (Rs.799) | Biotique (Rs.849) | Whiting (Rs.999) | Hydra (Rs.999) | Oxylife (Rs.999) | Red Wine (Rs.1,399) | Korean (Rs.1,999) | Premium (Rs.1,599) | O3+ Power (Rs.1,999) | O3+ Bridal (Rs.2,199)
 
-*HAIR CARE:*
-- Classic Hair Spa: Rs.499 | Loreal Hair Spa: Rs.799
-- Hair Trimming: Rs.149 | Blow Dryer: Rs.249 | Hair Cut: Rs.249
-- Root Touchup: Rs.649 | Full Length Hair Color: Rs.1,499
-- Nanoplastia: Rs.2,499 | Keratin: Rs.1,499
-- Global Color: Rs.2,499 | Global with Pre-lights: Rs.3,999
+*HAIR CARE:* Classic Spa (Rs.499) | Loreal (Rs.799) | Trimming (Rs.149) | Blow Dry (Rs.249) | Cut (Rs.249) | Root Touch (Rs.649) | Color (Rs.1,499) | Nanoplastia (Rs.2,499) | Keratin (Rs.1,499) | Global (Rs.2,499) | Global+ (Rs.3,999)
 
-*CLEANUPS:* Fruit (Rs.349) | Red Wine (Rs.649) | Whiting Glow (Rs.549) | Oxy Pro (Rs.549) | D-Tan (Rs.599)
+*CLEANUPS:* Fruit (Rs.349) | Red Wine (Rs.649) | Whiting (Rs.549) | Oxy Pro (Rs.549) | D-Tan (Rs.599)
 
-*WAXING:*
-- Brazilian Face (Rs.299) | Honey Full Arms (Rs.199) | Honey Full Legs (Rs.299)
-- Honey Full Body (Rs.1,199) | White Choco Full Arms (Rs.299) | White Choco Full Legs (Rs.399)
-- White Choco Full Body (Rs.1,499) | Rica Full Arms (Rs.399) | Rica Full Legs (Rs.599)
-- Rica Full Body (Rs.1,999)
+*WAXING:* Face (Rs.299) | Arms (Rs.199-399) | Legs (Rs.299-599) | Full Body (Rs.1,199-1,999)
 
-*BASIC CARING:*
-- Arms Polishing (Rs.349) | Full Body Polishing (Rs.1,999)
-- Manicure (Rs.349) | Threading (Rs.30) | Upperlips (Rs.20)
-- Upperlips Wax (Rs.50) | Chin Wax (Rs.50) | Head Massage (Rs.249)
+*BASIC:* Polishing (Rs.349-1,999) | Manicure (Rs.349) | Threading (Rs.30) | Lips (Rs.20-50) | Massage (Rs.249)
 
-*BLEACH:*
-- Herbal (Rs.249) | Back (Rs.299) | Full Arms (Rs.299)
-- Oxylife (Rs.349) | D-Tan (Rs.349) | Full Body (Rs.1,999)
+*BLEACH:* Herbal (Rs.249) | Back (Rs.299) | Arms (Rs.299) | Oxylife (Rs.349) | D-Tan (Rs.349) | Full Body (Rs.1,999)
 
-*MAKEUP:*
-- HD Makeup: Rs.1,999 | Sillicon HD Makeup: Rs.2,999`;
+*MAKEUP:* HD (Rs.1,999) | Silicon HD (Rs.2,999)`;
     
     default:
       return "Aap service select karein. A, B, C, D ya E reply karein.";
@@ -393,10 +377,10 @@ async function sendPDF(toPhone, pdfUrl, caption) {
       }
     };
     await axios.post(url, payload);
-    console.log(`PDF sent to ${toPhone}`);
+    console.log(`✅ PDF sent to ${toPhone}`);
   } catch (err) {
-    console.error(`PDF send failed to ${toPhone}:`, err?.response?.data || err.message);
-    await sendText(toPhone, `Aap yeh PDF download kar sakte hain: ${pdfUrl}`);
+    console.error(`❌ PDF failed:`, err?.response?.data || err.message);
+    await sendText(toPhone, `PDF link: ${pdfUrl}`);
   }
 }
 
@@ -404,9 +388,9 @@ async function sendText(toPhone, text) {
   try {
     const url = `https://panel.wapi.in.net/api/${WAPI_VENDOR_UID}/contact/send-message?token=${WAPI_TOKEN}`;
     await axios.post(url, { phone_number: toPhone, message_body: text, message_type: "text" });
-    console.log(`Text sent to ${toPhone}`);
+    console.log(`✅ Text sent to ${toPhone}`);
   } catch (err) {
-    console.error(`Send failed:`, err?.response?.data || err.message);
+    console.error(`❌ Send failed:`, err?.response?.data || err.message);
   }
 }
 
@@ -424,8 +408,7 @@ function parseWebhook(body) {
         const selectedId    = interactive?.list_reply?.id    || interactive?.button_reply?.id    || "";
         const selectedTitle = interactive?.list_reply?.title || interactive?.button_reply?.title || "";
         return {
-          phone,
-          name,
+          phone, name,
           text: selectedId || selectedTitle,
           hasMedia: false,
           isInteractive: true,
@@ -434,8 +417,7 @@ function parseWebhook(body) {
       }
 
       return {
-        phone,
-        name,
+        phone, name,
         text: msg?.text?.body || "",
         hasMedia: ["image","audio","video","document","sticker"].includes(msg?.type),
         isInteractive: false,
@@ -453,30 +435,32 @@ app.post("/webhook", async (req, res) => {
     if (!text && !hasMedia) return res.sendStatus(200);
     if (text && text.trim() === "") return res.sendStatus(200);
 
-    console.log(`[${new Date().toLocaleTimeString()}] ${phone}: "${text.substring(0, 60)}"`);
+    console.log(`\n📱 [${new Date().toLocaleTimeString()}] ${phone}: "${text.substring(0, 60)}"`);
 
     // Skip admin
     const cleanPhone = phone.replace(/\D/g, "");
-    if (cleanPhone.endsWith("9560277217")) return res.sendStatus(200);
+    if (cleanPhone.endsWith("9560277217")) {
+      console.log(`🔐 Admin message - skipping`);
+      return res.sendStatus(200);
+    }
 
-    // EXACT TRIGGER
     const isExactMatch = isExactTrigger(text);
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
 
-    // Add lead ONLY on exact trigger
+    // Add lead on exact trigger
     if (!hasHistory && isExactMatch) {
       const firstName = name ? name.split(" ")[0] : "Unknown";
-      await addActiveLead(phone, firstName, "", "", "Direct Message", "New Lead", text);
-      console.log(`LEAD ADDED: ${phone}`);
+      await addActiveLead(phone, firstName, "", "", "WhatsApp Direct", "New Lead", text);
     }
 
     // Ignore if not exact trigger and no history
     if (!hasHistory && !isExactMatch) {
-      console.log(`IGNORED: Not exact trigger`);
+      console.log(`⏭️  IGNORED: Not exact trigger`);
       return res.sendStatus(200);
     }
 
     if (!BOT_ACTIVE) {
+      console.log(`⛔ BOT_ACTIVE=false`);
       return res.sendStatus(200);
     }
 
@@ -484,7 +468,7 @@ app.post("/webhook", async (req, res) => {
 
     // NEW LEAD - Send menu
     if (!hasHistory && isExactMatch) {
-      console.log(`SENDING MENU to ${phone}`);
+      console.log(`🎯 NEW LEAD: Sending menu to ${phone}`);
       await new Promise(r => setTimeout(r, 1500));
       await sendMenuButtons(phone);
       pendingMenuSelect.add(phone);
@@ -498,7 +482,7 @@ app.post("/webhook", async (req, res) => {
       const selection = isInteractive ? (interactiveId || "") : detectMenuSelection(text);
 
       if (selection && ["A","B","C","D","E"].includes(selection)) {
-        console.log(`PATH ${selection}: ${phone}`);
+        console.log(`📋 PATH ${selection}: ${phone}`);
         pendingMenuSelect.delete(phone);
         customerPath.set(phone, selection);
 
@@ -519,9 +503,7 @@ app.post("/webhook", async (req, res) => {
 
         await new Promise(r => setTimeout(r, 1500));
         await sendText(phone, response);
-        lastSentMessage.set(phone, response);
 
-        // Send PDF for Path A and B only
         if (selection === "A" || selection === "B") {
           await new Promise(r => setTimeout(r, 2500));
           await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
@@ -536,67 +518,63 @@ app.post("/webhook", async (req, res) => {
 
     // CONTINUING CONVERSATION
     if (hasHistory) {
-      console.log(`Conversation: ${phone}`);
+      console.log(`💬 Conversation: ${phone}`);
       addToHistory(phone, "user", text);
 
-      // CRITICAL: Check Bot Intervention BEFORE EVERY REPLY
+      // CHECK BOT INTERVENTION EVERY TIME
       const canReplyNow = await checkBotIntervention(phone);
       if (!canReplyNow) {
-        console.log(`Bot Intervention = NO - SILENT for ${phone}`);
+        console.log(`🔕 Bot Intervention = NO - SILENT`);
         return res.sendStatus(200);
       }
 
       const lower = text.toLowerCase().trim();
       
-      // Check if asking for location
+      // Ask for location?
       const askingLocation = lower.includes("location") || lower.includes("address") || 
                             lower.includes("kahan") || lower.includes("where") ||
                             lower.includes("studio") || lower.includes("saath") ||
-                            lower.includes("adrress") || lower.includes("pata");
+                            lower.includes("address") || lower.includes("pata");
       
-      // Check if asking for Instagram/social
+      // Ask for Instagram?
       const askingInsta = lower.includes("instagram") || lower.includes("insta") ||
                          lower.includes("facebook") || lower.includes("social") ||
                          lower.includes("follow") || lower.includes("id");
 
-      // Check if booking intent
       const hasBookingIntent = detectBookingIntent(text);
       const alreadySentContact = contactMessageSent.get(phone) || await hasContactMessageSent(phone);
 
       if (askingLocation) {
-        // REPLY: Location
-        console.log(`LOCATION REQUEST: ${phone}`);
+        console.log(`📍 Location request`);
         await new Promise(r => setTimeout(r, 1500));
         const locationResponse = `*Studio Address:*
 H1/11, near Gurudwara
 Vikaspuri, Delhi
 (Near Janakpuri West Metro Station)
 
-Open: Tuesday - Sunday, 10 AM - 8 PM
-Closed: Monday`;
+📞 Open: Tuesday - Sunday, 10 AM - 8 PM
+❌ Closed: Monday`;
         
         await sendText(phone, locationResponse);
         addToHistory(phone, "assistant", locationResponse);
         await updateActiveLead(phone, { status: "Asked for Location" });
         
       } else if (askingInsta) {
-        // REPLY: Instagram/Social
-        console.log(`INSTAGRAM REQUEST: ${phone}`);
+        console.log(`📸 Instagram request`);
         await new Promise(r => setTimeout(r, 1500));
         const instaResponse = `Follow us! 💄
 
 *Instagram:* @garimanagpalmua
 https://www.instagram.com/garimanagpalmua/
 
-Check out our work, transformations & specials! 🌟`;
+Check transformations & specials! 🌟`;
         
         await sendText(phone, instaResponse);
         addToHistory(phone, "assistant", instaResponse);
         await updateActiveLead(phone, { status: "Asked for Instagram" });
         
       } else if (hasBookingIntent && !alreadySentContact) {
-        // REPLY: Contact for booking (ONLY ONCE)
-        console.log(`BOOKING INTENT - Sending contact to ${phone}`);
+        console.log(`🎯 BOOKING INTENT - Sending contact ONCE`);
         contactMessageSent.set(phone, true);
         
         await new Promise(r => setTimeout(r, 1500));
@@ -608,8 +586,7 @@ Check out our work, transformations & specials! 🌟`;
         await updateActiveLead(phone, { status: "Booking Inquiry - Contact Sent" });
         
       } else {
-        // NO RESPONSE - Bot stays silent
-        console.log(`No action needed for ${phone} - awaiting relevant query`);
+        console.log(`⏳ No action - awaiting relevant query`);
       }
       
       return res.sendStatus(200);
@@ -617,20 +594,19 @@ Check out our work, transformations & specials! 🌟`;
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("Error:", err.message);
+    console.error("❌ Webhook error:", err.message);
     res.sendStatus(200);
   }
 });
 
 app.get("/admin", (req, res) => {
   res.setHeader("Content-Type", "text/html");
-  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Beauty Box Admin</title><style>*{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:400px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600;color:#111;margin-bottom:4px}p{font-size:13px;color:#888;margin-bottom:16px}label{font-size:13px;color:#444;display:block;margin:12px 0 5px;font-weight:500}input,textarea{width:100%;padding:11px 14px;border:1px solid #ddd;border-radius:10px;font-size:14px;outline:none;margin-bottom:8px;font-family:sans-serif}.msg{margin-top:14px;padding:11px;border-radius:10px;font-size:14px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdecea;color:#c62828}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:500;cursor:pointer}button:hover{background:#0d6b65}</style></head><body><div class="card"><h2>Beauty Box Admin</h2><label>Phone</label><input id="ph" type="tel" placeholder="919999999999"><label>Name</label><input id="nm" type="text" placeholder="Priya"><label>Message</label><textarea id="msg" placeholder="Opening message"></textarea><label>Key</label><input id="ky" type="password" placeholder="beautybox2024"><button onclick="send()">Send</button><div class="msg" id="msg1"></div></div><script>async function send(){const ph=document.getElementById('ph').value.trim();const ky=document.getElementById('ky').value.trim();if(!ph||!ky){sh('Enter details','err');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:document.getElementById('nm').value.trim(),key:ky,message:document.getElementById('msg').value.trim()})});const d=await r.json();sh(d.success?'Done!':d.error,'msg1',d.success?'ok':'err');}catch(e){sh('Error','msg1','err')}}function sh(t,id,cls){const el=document.getElementById(id);el.textContent=t;el.className='msg '+cls;el.style.display='block';}</script></body></html>`);
+  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Beauty Box Admin</title><style>*{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif}body{background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:400px;box-shadow:0 4px 20px rgba(0,0,0,0.1)}h2{font-size:18px;font-weight:600}label{font-size:13px;color:#666;display:block;margin:12px 0 5px}input,textarea{width:100%;padding:11px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:8px}button{width:100%;background:#128C7E;color:#fff;border:none;border-radius:8px;padding:12px;font-size:15px;font-weight:500;cursor:pointer}button:hover{background:#0d6b65}.msg{margin-top:12px;padding:10px;border-radius:8px;text-align:center;display:none}.ok{background:#e8f5e9;color:#2e7d32}.err{background:#fdeaea;color:#c62828}</style></head><body><div class="card"><h2>Beauty Box Admin</h2><label>Phone</label><input id="ph" placeholder="919999999999"><label>Name</label><input id="nm" placeholder="Customer Name"><label>Message</label><textarea id="msg" placeholder="Message" rows="3"></textarea><label>Key</label><input id="ky" type="password" placeholder="beautybox2024"><button onclick="send()">Send Message</button><div class="msg" id="res"></div></div><script>async function send(){const ph=document.getElementById('ph').value.trim();const ky=document.getElementById('ky').value.trim();if(!ph||!ky){show('Enter phone & key','err');return;}try{const r=await fetch('/admin/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:ph,name:document.getElementById('nm').value.trim(),key:ky,message:document.getElementById('msg').value.trim()})});const d=await r.json();show(d.success?'✅ Sent!':d.error,'res',d.success?'ok':'err');}catch(e){show('❌ Error','res','err')}}function show(t,id,c){const el=document.getElementById(id);el.textContent=t;el.className='msg '+c;el.style.display='block'}</script></body></html>`);
 });
 
 app.post("/admin/start", async (req, res) => {
   const { phone, name, key, message } = req.body;
   if (key !== ADMIN_KEY) return res.json({ success: false, error: "Wrong key" });
-  if (!phone) return res.json({ success: false, error: "Phone required" });
   try {
     const firstName = name ? name.trim().split(" ")[0] : "";
     if (message) {
@@ -645,26 +621,41 @@ app.post("/admin/start", async (req, res) => {
 
 app.get("/", (req, res) => {
   res.json({
-    agent: "Beauty Box Bot v4.0",
-    status: "✅ ACTIVE",
-    trigger: "Exact: 'Hello! Can I get more info on this?'",
+    agent: "Beauty Box Bot v4.5",
+    status: "✅ RUNNING",
+    trigger: "Hello! Can I get more info on this?",
     pdf_url: PREBRIDAL_PDF_URL,
-    contact_message: "Sent ONCE only - no repeats",
-    bot_intervention: "ENABLED",
+    features: [
+      "Exact trigger detection",
+      "Location response",
+      "Instagram sharing",
+      "Contact message (once only)",
+      "Bot Intervention check",
+      "Google Sheets logging"
+    ],
   });
 });
 
 app.listen(PORT, async () => {
-  console.log(`\n🚀 BEAUTY BOX BOT v4.0`);
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`🚀 BEAUTY BOX BOT v4.5`);
+  console.log(`${"=".repeat(50)}`);
   console.log(`Port: ${PORT}`);
   console.log(`Status: ✅ ACTIVE`);
-  console.log(`\nFeatures:`);
-  console.log(`✓ Exact trigger only`);
-  console.log(`✓ Contact message sent ONCE`);
-  console.log(`✓ Smart responses to customer questions`);
-  console.log(`✓ No spam or repeat messages`);
-  console.log(`✓ Bot Intervention check enabled`);
-  console.log(`✓ PDF sent for Path A & B`);
+  console.log(`PDF URL: ${PREBRIDAL_PDF_URL}`);
+  console.log(`\n📋 FEATURES:`);
+  console.log(`✓ Exact trigger: "Hello! Can I get more info on this?"`);
+  console.log(`✓ Location: "${PREBRIDAL_PDF_URL}"`);
+  console.log(`✓ Instagram: @garimanagpalmua`);
+  console.log(`✓ Contact: +91 93542 60517 (sent once)`);
+  console.log(`✓ Bot Intervention: Column K check`);
+  console.log(`✓ PDF: Short URL support`);
+  console.log(`\n🔗 ENDPOINTS:`);
+  console.log(`GET  / → Bot status`);
+  console.log(`POST /webhook → WhatsApp messages`);
+  console.log(`GET  /admin → Admin panel`);
+  
   await initSheets();
-  console.log(`\nReady!\n`);
+  
+  console.log(`\n✨ All systems ready!\n`);
 });
