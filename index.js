@@ -266,6 +266,9 @@ async function sendPDF(toPhone, pdfUrl, caption) {
 
 function parseWebhook(body) {
   try {
+    console.log("🔍 Parsing payload:", JSON.stringify(body).substring(0, 150));
+    
+    // Try WhatsApp Cloud API format
     const messages = body?.entry?.[0]?.changes?.[0]?.value?.messages;
     if (messages?.length > 0) {
       const msg = messages[0];
@@ -273,6 +276,7 @@ function parseWebhook(body) {
       const phone = msg?.from || "";
       const name = contacts[0]?.profile?.name || null;
 
+      console.log(`✅ WhatsApp Cloud format - Phone: ${phone}`);
       return {
         phone,
         name,
@@ -280,6 +284,39 @@ function parseWebhook(body) {
         hasMedia: !!msg?.type && msg.type !== "text",
       };
     }
+
+    // Try WAPI format - phone in contact, text in message
+    if (body?.contact?.phone_number || body?.data?.contact?.phone_number) {
+      const phone = body?.contact?.phone_number || body?.data?.contact?.phone_number || "";
+      const text = body?.message?.body || body?.data?.message?.body || "";
+      const name = body?.contact?.first_name || body?.data?.contact?.first_name || null;
+
+      console.log(`✅ WAPI format - Phone: ${phone}, Text: ${text.substring(0, 50)}`);
+      return {
+        phone,
+        name,
+        text,
+        hasMedia: false,
+      };
+    }
+
+    // Try alternate WAPI format
+    if (body?.phone_number || body?.sender) {
+      const phone = body?.phone_number || body?.sender || "";
+      const text = body?.message || body?.text || "";
+      const name = body?.name || null;
+
+      console.log(`✅ Alternate format - Phone: ${phone}, Text: ${text.substring(0, 50)}`);
+      return {
+        phone,
+        name,
+        text,
+        hasMedia: false,
+      };
+    }
+
+    console.log("❌ Could not parse payload - unknown format");
+    console.log("Full payload:", JSON.stringify(body));
     return null;
   } catch (e) {
     console.error("❌ Parse webhook error:", e.message);
