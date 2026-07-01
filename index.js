@@ -160,7 +160,19 @@ function getHistory(phone) {
   return conversations.get(phone);
 }
 
-const MENU_TEXT = `Welcome to Beauty Box Makeup Studio 💄
+const MENU_TEXT_EN = `Welcome to Beauty Box Makeup Studio 💄
+
+Which service would you like to know about?
+
+*A* -- Pre-Bridal Package
+*B* -- Pre-Bridal + Bridal Makeup Combo
+*C* -- Hydra Facial Package
+*D* -- Nail Services
+*E* -- Other Beauty Services
+
+Reply A, B, C, D or E`;
+
+const MENU_TEXT_HI = `Welcome to Beauty Box Makeup Studio 💄
 
 Aap kaunsi service ke baare mein jaanna chahti hain?
 
@@ -171,6 +183,82 @@ Aap kaunsi service ke baare mein jaanna chahti hain?
 *E* -- Other Beauty Services
 
 Reply A, B, C, D ya E karein`;
+
+// Detect if customer used Hinglish/Hindi
+function isHinglish(text) {
+  const hinglishWords = ["kab", "kaunsa", "kya", "aap", "ho", "hai", "nahi", "haan", "bilkul", "theek", "mein", "ke", "se", "ko", "aur", "ya", "hum", "tum", "mere", "iska", "woh", "yeh", "agar", "to", "lekin", "shaadi"];
+  const lower = text.toLowerCase();
+  return hinglishWords.some(word => lower.includes(word));
+}
+
+// Language-specific messages
+const MESSAGES = {
+  studioVisit: {
+    en: `📍 *Studio Visit Booking:*\n\nWhen can you visit our studio?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nWhich day and time is convenient for you?`,
+    hi: `📍 *Studio Visit Booking:*\n\nAap studio mein kab visit kar sakte ho?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nAapke liye kaunsa din aur time convenient hai?`
+  },
+  
+  weddingDate: {
+    en: `💍 *Wedding Date*\n\nWhen is your wedding?\n\n(E.g., June 2025, July 15)`,
+    hi: `💍 *Shaadi ki tarikhi*\n\nAapki shaadi kab hai?\n\n(E.g., June 2025, July 15)`
+  },
+  
+  location: {
+    en: `📌 *Location*\n\nWhich area are you from?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`,
+    hi: `📌 *Area*\n\nAap kaunse area se ho?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`
+  },
+  
+  timingReply: {
+    en: `Available timings: 10 AM to 8 PM, Tuesday to Sunday\n\nWhich day and time works best for you?`,
+    hi: `Available timing: 10 AM to 8 PM, Tuesday to Sunday\n\nAap kaunse din aur kaunse time mein aa sakte ho?`
+  },
+  
+  addressReply: {
+    en: `*Studio Address:*\nH1/11, near Gurudwara\nVikaspuri, Delhi\n\n🚇 *Near:* Janakpuri West Metro Station\n📞 Contact: +91 93542 60517`,
+    hi: `*Studio Address:*\nH1/11, near Gurudwara\nVikaspuri, Delhi\n\n🚇 *Paas:* Janakpuri West Metro Station\n📞 Contact: +91 93542 60517`
+  },
+  
+  priceA: {
+    en: `*PRE-BRIDAL PACKAGE*\n\nPrice: Rs. 7,499\n(Market Value: Rs. 16,800 - 71% OFF)\n\n12 services in 3 sittings`,
+    hi: `*PRE-BRIDAL PACKAGE*\n\nPrice: Rs. 7,499\n(Market Value: Rs. 16,800 - 71% OFF)\n\n12 services in 3 sittings`
+  },
+  
+  priceB: {
+    en: `*PRE-BRIDAL + BRIDAL MAKEUP*\n\nPrice: Rs. 16,500\n(Includes 12 pre-bridal services + Bridal makeup)`,
+    hi: `*PRE-BRIDAL + BRIDAL MAKEUP*\n\nPrice: Rs. 16,500\n(Includes 12 pre-bridal services + Bridal makeup)`
+  },
+  
+  confirmation: {
+    en: `Perfect! 🎉\n\nWe'll send your details to Garima.\nShe'll confirm with you soon.\n\n*Garima:* +91 93542 60517\nYou can WhatsApp or call directly.`,
+    hi: `Perfect! 🎉\n\nHum Garima ma'am ko aapke details bhej denge.\nVo aapko confirm karengi.\n\n*Garima ma'am:* +91 93542 60517\nDirect WhatsApp/Call kar sakte ho.`
+  },
+  
+  instagram: {
+    en: `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`,
+    hi: `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`
+  },
+  
+  generalQuestion: {
+    en: `Any other questions?\n\nGarima: +91 93542 60517`,
+    hi: `Koi aur question?\n\nGarima ma'am: +91 93542 60517`
+  }
+};
+
+function getMessage(key, useHinglish = false) {
+  return useHinglish ? (MESSAGES[key].hi || MESSAGES[key].en) : (MESSAGES[key].en || MESSAGES[key].hi);
+}
+
+function detectLanguage(text) {
+  const hindiKeywords = ["kab", "kya", "hai", "aap", "hun", "mein", "ke", "aur", "tha", "ho", "kar", "chahti", "chahta", "ko", "se", "ki", "na", "ya"];
+  const text_lower = text.toLowerCase();
+  
+  let hindiCount = 0;
+  for (const keyword of hindiKeywords) {
+    if (text_lower.includes(keyword)) hindiCount++;
+  }
+  
+  return hindiCount >= 2 ? "hinglish" : "english";
+}
 
 function detectMenuSelection(text) {
   const t = (text || "").trim().toUpperCase();
@@ -368,12 +456,18 @@ app.post("/webhook", async (req, res) => {
     if (!hasHistory && isExactTrigger) {
       console.log(`🎯 NEW LEAD: ${phone}`);
       const firstName = name ? name.split(" ")[0] : "Unknown";
+      const useHinglish = isHinglish(text);
+      
       await addActiveLead(phone, firstName, "WhatsApp", text);
 
       conversations.set(phone, []);
       await new Promise(r => setTimeout(r, 1000));
-      await sendText(phone, MENU_TEXT);
+      
+      const menuText = useHinglish ? MENU_TEXT_HI : MENU_TEXT_EN;
+      await sendText(phone, menuText);
       pendingMenuSelect.add(phone);
+      
+      console.log(`🗣️ Customer language: ${useHinglish ? "Hinglish" : "English"}`);
       return res.sendStatus(200);
     }
 
@@ -395,20 +489,69 @@ app.post("/webhook", async (req, res) => {
         const customerName = name ? name.split(" ")[0] : "";
         const response = getServiceResponse(selection, customerName);
 
-        await new Promise(r => setTimeout(r, 1000));
-        await sendText(phone, response);
-
+        // For Pre-Bridal paths (A & B), send PDF + studio visit flow
         if (selection === "A" || selection === "B") {
+          console.log(`📄 Sending Pre-Bridal PDF for path ${selection}`);
+          
+          // Send service details
+          await new Promise(r => setTimeout(r, 1000));
+          await sendText(phone, response);
+
+          // Send PDF
           await new Promise(r => setTimeout(r, 2000));
           await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
+
+          // Send studio visit flow
+          await new Promise(r => setTimeout(r, 2000));
+          const useHinglish = isHinglish(text);
+          
+          const studioMsg = useHinglish 
+            ? `📍 *Studio Visit Booking:*\n\nAap studio mein kab visit kar sakte ho?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nAapke liye kaunsa din aur time convenient hai?`
+            : `📍 *Studio Visit Booking:*\n\nWhen can you visit our studio?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nWhich day and time is convenient for you?`;
+          
+          await sendText(phone, studioMsg);
+
+          // Ask for marriage date
+          await new Promise(r => setTimeout(r, 1500));
+          const dateMsg = useHinglish
+            ? `💍 *Shaadi ki tarikhi*\n\nAapki shaadi kab hai?\n\n(E.g., June 2025, July 15)`
+            : `💍 *Wedding Date*\n\nWhen is your wedding?\n\n(E.g., June 2025, July 15)`;
+          
+          await sendText(phone, dateMsg);
+
+          // Ask for location/area
+          await new Promise(r => setTimeout(r, 1500));
+          const locationMsg = useHinglish
+            ? `📌 *Area*\n\nAap kaunse area se ho?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`
+            : `📌 *Location*\n\nWhich area are you from?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`;
+          
+          await sendText(phone, locationMsg);
+
+          // Set conversation state
+          conversations.set(phone, []);
+          getHistory(phone).push({ role: "assistant", content: response });
+          getHistory(phone).push({ role: "assistant", content: studioMsg });
+          getHistory(phone).push({ role: "assistant", content: dateMsg });
+          getHistory(phone).push({ role: "assistant", content: locationMsg });
+
+          await updateActiveLead(phone, {
+            status: `Path ${selection} - Collecting Studio Visit Details`,
+            servicePath: selection,
+          });
+
+          return res.sendStatus(200);
+        } else {
+          // For other paths (C, D, E), just send service details
+          await new Promise(r => setTimeout(r, 1000));
+          await sendText(phone, response);
+
+          await updateActiveLead(phone, {
+            status: `Selected: ${selection}`,
+            servicePath: selection,
+          });
+
+          return res.sendStatus(200);
         }
-
-        await updateActiveLead(phone, {
-          status: `Selected: ${selection}`,
-          servicePath: selection,
-        });
-
-        return res.sendStatus(200);
       } else {
         await sendText(phone, "Aap A, B, C, D ya E reply karein");
         return res.sendStatus(200);
@@ -427,9 +570,121 @@ app.post("/webhook", async (req, res) => {
       }
 
       const lower = text.toLowerCase().trim();
+      const selection = customerPath.get(phone);
+
+      // STUDIO VISIT FLOW (For Pre-Bridal paths A & B)
+      if ((selection === "A" || selection === "B") && getHistory(phone).length < 15) {
+        console.log(`💬 Studio visit conversation: ${phone}`);
+
+        // Update sheet with customer details
+        await updateActiveLead(phone, { 
+          lastMsg: text,
+          status: "Collecting Studio Visit Details"
+        });
+
+        // Customer asking about timing/availability
+        if (lower.includes("time") || lower.includes("slot") || lower.includes("available") || lower.includes("kab")) {
+          console.log(`⏰ Customer asking about timing`);
+          await new Promise(r => setTimeout(r, 1000));
+          const useHinglish = isHinglish(text);
+          const timingMsg = useHinglish
+            ? `Available timing: 10 AM to 8 PM, Tuesday to Sunday\n\nAap kaunse din aur kaunse time mein aa sakte ho?`
+            : `Available timings: 10 AM to 8 PM, Tuesday to Sunday\n\nWhich day and time works best for you?`;
+          
+          await sendText(phone, timingMsg);
+          getHistory(phone).push({ role: "user", content: text });
+          getHistory(phone).push({ role: "assistant", content: timingMsg });
+          return res.sendStatus(200);
+        }
+
+        // Customer asking about location/address
+        if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio")) {
+          console.log(`📍 Customer asking about location`);
+          await new Promise(r => setTimeout(r, 1000));
+          const addrMsg = `*Studio Address:*
+H1/11, near Gurudwara
+Vikaspuri, Delhi
+
+🚇 *Near:* Janakpuri West Metro Station
+📞 Contact: +91 93542 60517`;
+          
+          await sendText(phone, addrMsg);
+          getHistory(phone).push({ role: "user", content: text });
+          getHistory(phone).push({ role: "assistant", content: addrMsg });
+          return res.sendStatus(200);
+        }
+
+        // Customer asking about price/cost
+        if (lower.includes("price") || lower.includes("cost") || lower.includes("kitna") || lower.includes("kitne")) {
+          console.log(`💰 Customer asking about price`);
+          await new Promise(r => setTimeout(r, 1000));
+          let priceMsg = "";
+          if (selection === "A") {
+            priceMsg = `*PRE-BRIDAL PACKAGE*
+Price: Rs. 7,499
+(Market Value: Rs. 16,800 - 71% OFF)
+
+12 services in 3 sittings`;
+          } else if (selection === "B") {
+            priceMsg = `*PRE-BRIDAL + BRIDAL MAKEUP*
+Price: Rs. 16,500
+(Includes 12 pre-bridal services + Bridal makeup)`;
+          }
+          
+          await sendText(phone, priceMsg);
+          getHistory(phone).push({ role: "user", content: text });
+          getHistory(phone).push({ role: "assistant", content: priceMsg });
+          return res.sendStatus(200);
+        }
+
+        // Customer providing date/time info (just collect it)
+        if (lower.includes("next") || lower.includes("month") || lower.includes("week") || 
+            /\d{1,2}/.test(text) || lower.includes("morning") || lower.includes("evening") ||
+            lower.includes("afternoon") || lower.includes("am") || lower.includes("pm")) {
+          console.log(`📅 Customer provided date/time: ${text}`);
+          await new Promise(r => setTimeout(r, 1000));
+          
+          const useHinglish = isHinglish(text);
+          const confirmMsg = useHinglish
+            ? `Perfect! 🎉\n\nHum Garima ma'am ko aapke details bhej denge.\nVo aapko confirm karengi.\n\n*Garima ma'am:* +91 93542 60517\nDirect WhatsApp/Call kar sakte ho.`
+            : `Perfect! 🎉\n\nWe'll send your details to Garima.\nShe'll confirm with you soon.\n\n*Garima:* +91 93542 60517\nYou can WhatsApp or call directly.`;
+          
+          await sendText(phone, confirmMsg);
+          
+          await updateActiveLead(phone, {
+            status: "Ready for Garima Follow-up",
+            lastMsg: text
+          });
+          
+          getHistory(phone).push({ role: "user", content: text });
+          getHistory(phone).push({ role: "assistant", content: confirmMsg });
+          return res.sendStatus(200);
+        }
+
+        // Customer asking for Instagram
+        if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
+          console.log(`📸 Instagram request`);
+          await new Promise(r => setTimeout(r, 1000));
+          const useHinglish = isHinglish(text);
+          const instaMsg = useHinglish
+            ? `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`
+            : `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`;
+          await sendText(phone, instaMsg);
+          getHistory(phone).push({ role: "user", content: text });
+          getHistory(phone).push({ role: "assistant", content: instaMsg });
+          return res.sendStatus(200);
+        }
+
+        // Default: Bot confused or doesn't understand - STAY SILENT
+        console.log(`❓ Unknown query - bot staying silent: ${text.substring(0, 60)}`);
+        return res.sendStatus(200);
+      }
+
+      // GENERAL CONVERSATION (For non-PreBridal paths)
+      const lower2 = text.toLowerCase().trim();
 
       // Location request
-      if (lower.includes("location") || lower.includes("address") || lower.includes("kahan") || lower.includes("studio")) {
+      if (lower2.includes("location") || lower2.includes("address") || lower2.includes("kahan") || lower2.includes("studio")) {
         console.log(`📍 Location request`);
         await new Promise(r => setTimeout(r, 1000));
         const locationMsg = `*Studio Address:*\nH1/11, near Gurudwara\nVikaspuri, Delhi\n(Near Janakpuri West Metro)\n\n📞 +91 93542 60517\n⏰ Tue-Sun: 10 AM - 8 PM`;
@@ -439,7 +694,7 @@ app.post("/webhook", async (req, res) => {
       }
 
       // Instagram request
-      if (lower.includes("instagram") || lower.includes("insta") || lower.includes("follow")) {
+      if (lower2.includes("instagram") || lower2.includes("insta") || lower2.includes("follow")) {
         console.log(`📸 Instagram request`);
         await new Promise(r => setTimeout(r, 1000));
         const instaMsg = `Follow us! 💄\n\n@garimanagpalmua\nhttps://www.instagram.com/garimanagpalmua/`;
@@ -450,7 +705,7 @@ app.post("/webhook", async (req, res) => {
 
       // Booking intent
       const bookingWords = ["book", "slot", "available", "kab", "call", "number", "price", "cost"];
-      const hasBooking = bookingWords.some(word => lower.includes(word));
+      const hasBooking = bookingWords.some(word => lower2.includes(word));
       const alreadySent = contactMessageSent.get(phone);
 
       if (hasBooking && !alreadySent) {
@@ -468,7 +723,7 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      console.log(`⏳ Other query - no action`);
+      console.log(`⏳ Unknown query - bot staying silent`);
       return res.sendStatus(200);
     }
 
