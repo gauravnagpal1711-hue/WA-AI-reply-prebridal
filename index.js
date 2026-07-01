@@ -451,6 +451,81 @@ app.post("/webhook", async (req, res) => {
 
     const hasHistory = conversations.has(phone) && getHistory(phone).length > 0;
     const isExactTrigger = text.trim().toLowerCase() === "Hello! Can I get more info on this?".toLowerCase();
+    const selection = detectMenuSelection(text);
+
+    // MENU SELECTION (happens after trigger)
+    if (pendingMenuSelect.has(phone) && selection) {
+      console.log(`📋 PATH ${selection}: ${phone}`);
+      pendingMenuSelect.delete(phone);
+      customerPath.set(phone, selection);
+
+      const customerName = name ? name.split(" ")[0] : "";
+      const response = getServiceResponse(selection, customerName);
+
+      // For Pre-Bridal paths (A & B), send PDF + studio visit flow
+      if (selection === "A" || selection === "B") {
+        console.log(`📄 Sending Pre-Bridal PDF for path ${selection}`);
+        
+        // Send service details
+        await new Promise(r => setTimeout(r, 1000));
+        await sendText(phone, response);
+
+        // Send PDF
+        await new Promise(r => setTimeout(r, 2000));
+        await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
+
+        // Send studio visit flow
+        await new Promise(r => setTimeout(r, 2000));
+        const useHinglish = isHinglish(text);
+        
+        const studioMsg = useHinglish 
+          ? `📍 *Studio Visit Booking:*\n\nAap studio mein kab visit kar sakte ho?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nAapke liye kaunsa din aur time convenient hai?`
+          : `📍 *Studio Visit Booking:*\n\nWhen can you visit our studio?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nWhich day and time is convenient for you?`;
+        
+        await sendText(phone, studioMsg);
+
+        // Ask for marriage date
+        await new Promise(r => setTimeout(r, 1500));
+        const dateMsg = useHinglish
+          ? `💍 *Shaadi ki tarikhi*\n\nAapki shaadi kab hai?\n\n(E.g., June 2025, July 15)`
+          : `💍 *Wedding Date*\n\nWhen is your wedding?\n\n(E.g., June 2025, July 15)`;
+        
+        await sendText(phone, dateMsg);
+
+        // Ask for location/area
+        await new Promise(r => setTimeout(r, 1500));
+        const locationMsg = useHinglish
+          ? `📌 *Area*\n\nAap kaunse area se ho?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`
+          : `📌 *Location*\n\nWhich area are you from?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`;
+        
+        await sendText(phone, locationMsg);
+
+        // Set conversation state
+        conversations.set(phone, []);
+        getHistory(phone).push({ role: "assistant", content: response });
+        getHistory(phone).push({ role: "assistant", content: studioMsg });
+        getHistory(phone).push({ role: "assistant", content: dateMsg });
+        getHistory(phone).push({ role: "assistant", content: locationMsg });
+
+        await updateActiveLead(phone, {
+          status: `Path ${selection} - Collecting Studio Visit Details`,
+          servicePath: selection,
+        });
+
+        return res.sendStatus(200);
+      } else {
+        // For other paths (C, D, E), just send service details
+        await new Promise(r => setTimeout(r, 1000));
+        await sendText(phone, response);
+
+        await updateActiveLead(phone, {
+          status: `Selected: ${selection}`,
+          servicePath: selection,
+        });
+
+        return res.sendStatus(200);
+      }
+    }
 
     // NEW LEAD
     if (!hasHistory && isExactTrigger) {
@@ -472,93 +547,12 @@ app.post("/webhook", async (req, res) => {
     }
 
     // Ignore non-trigger messages without history
-    if (!hasHistory && !isExactTrigger) {
-      console.log(`⏭️ IGNORED: No trigger match`);
+    if (!hasHistory && !isExactTrigger && !selection) {
+      console.log(`⏭️ IGNORED: No trigger match and no menu selection`);
       return res.sendStatus(200);
     }
 
-    // MENU SELECTION
-    if (pendingMenuSelect.has(phone)) {
-      const selection = detectMenuSelection(text);
-
-      if (selection && ["A", "B", "C", "D", "E"].includes(selection)) {
-        console.log(`📋 PATH ${selection}: ${phone}`);
-        pendingMenuSelect.delete(phone);
-        customerPath.set(phone, selection);
-
-        const customerName = name ? name.split(" ")[0] : "";
-        const response = getServiceResponse(selection, customerName);
-
-        // For Pre-Bridal paths (A & B), send PDF + studio visit flow
-        if (selection === "A" || selection === "B") {
-          console.log(`📄 Sending Pre-Bridal PDF for path ${selection}`);
-          
-          // Send service details
-          await new Promise(r => setTimeout(r, 1000));
-          await sendText(phone, response);
-
-          // Send PDF
-          await new Promise(r => setTimeout(r, 2000));
-          await sendPDF(phone, PREBRIDAL_PDF_URL, "Pre-Bridal Package Details");
-
-          // Send studio visit flow
-          await new Promise(r => setTimeout(r, 2000));
-          const useHinglish = isHinglish(text);
-          
-          const studioMsg = useHinglish 
-            ? `📍 *Studio Visit Booking:*\n\nAap studio mein kab visit kar sakte ho?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nAapke liye kaunsa din aur time convenient hai?`
-            : `📍 *Studio Visit Booking:*\n\nWhen can you visit our studio?\n\n*Available Days:* Tuesday - Sunday\n*Timings:* 10 AM - 8 PM\n*Location:* H1/11, near Gurudwara, Vikaspuri\n(Near Janakpuri West Metro)\n\nWhich day and time is convenient for you?`;
-          
-          await sendText(phone, studioMsg);
-
-          // Ask for marriage date
-          await new Promise(r => setTimeout(r, 1500));
-          const dateMsg = useHinglish
-            ? `💍 *Shaadi ki tarikhi*\n\nAapki shaadi kab hai?\n\n(E.g., June 2025, July 15)`
-            : `💍 *Wedding Date*\n\nWhen is your wedding?\n\n(E.g., June 2025, July 15)`;
-          
-          await sendText(phone, dateMsg);
-
-          // Ask for location/area
-          await new Promise(r => setTimeout(r, 1500));
-          const locationMsg = useHinglish
-            ? `📌 *Area*\n\nAap kaunse area se ho?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`
-            : `📌 *Location*\n\nWhich area are you from?\n\n(E.g., Janakpuri, Uttam Nagar, Dwarka)`;
-          
-          await sendText(phone, locationMsg);
-
-          // Set conversation state
-          conversations.set(phone, []);
-          getHistory(phone).push({ role: "assistant", content: response });
-          getHistory(phone).push({ role: "assistant", content: studioMsg });
-          getHistory(phone).push({ role: "assistant", content: dateMsg });
-          getHistory(phone).push({ role: "assistant", content: locationMsg });
-
-          await updateActiveLead(phone, {
-            status: `Path ${selection} - Collecting Studio Visit Details`,
-            servicePath: selection,
-          });
-
-          return res.sendStatus(200);
-        } else {
-          // For other paths (C, D, E), just send service details
-          await new Promise(r => setTimeout(r, 1000));
-          await sendText(phone, response);
-
-          await updateActiveLead(phone, {
-            status: `Selected: ${selection}`,
-            servicePath: selection,
-          });
-
-          return res.sendStatus(200);
-        }
-      } else {
-        await sendText(phone, "Aap A, B, C, D ya E reply karein");
-        return res.sendStatus(200);
-      }
-    }
-
-    // CONTINUING CONVERSATION
+    // CONTINUING CONVERSATION (for existing customers)
     if (hasHistory) {
       console.log(`💬 Continuing conversation: ${phone}`);
 
